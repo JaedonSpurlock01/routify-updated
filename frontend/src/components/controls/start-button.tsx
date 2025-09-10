@@ -1,0 +1,89 @@
+import { useState, useEffect } from "react";
+import { useEventListener } from "ahooks";
+
+import { useAlgorithmContext } from "@/lib/context/context";
+import { toast } from "sonner";
+import { Play, StopCircle } from "lucide-react";
+
+export const StartButton = () => {
+  const { startNode, endNode, isStopped, setIsStopped, setIsAlgorithmReady } =
+    useAlgorithmContext();
+
+  const [isClickProcessing, setIsClickProcessing] = useState(false);
+
+  useEffect(() => {
+    if (!endNode || !startNode) {
+      setIsStopped(true);
+      setIsAlgorithmReady(false);
+    }
+  }, [startNode, endNode, setIsAlgorithmReady, setIsStopped]);
+
+  // Register mouse enter and leave events
+  useEventListener("keypress", (e) => {
+    if (e.key === " ") {
+      handleButtonToggle();
+    }
+  });
+
+  const handleButtonToggle = () => {
+    if (isClickProcessing) return;
+
+    setIsClickProcessing(true);
+
+    if (!startNode) {
+      toast("Double click on the map to select your starting point", {
+        style: {
+          background: "#262626",
+          color: "#fff",
+        },
+        duration: 5000,
+        icon: "🛈",
+      });
+    } else if (!endNode) {
+      toast("Double click on the map to select your ending point", {
+        style: {
+          background: "#262626",
+          color: "#fff",
+        },
+        duration: 5000,
+        icon: "🛈",
+      });
+    } else if (!isStopped) {
+      setIsStopped(true);
+      setIsAlgorithmReady(false);
+    } else {
+      toast("Finding a path", {
+        style: {
+          background: "#262626",
+          color: "#fff",
+        },
+        duration: 5000,
+        icon: "🛈",
+      });
+      setIsStopped(false);
+      setIsAlgorithmReady(true);
+    }
+
+    setIsClickProcessing(false);
+  };
+
+  return (
+    <>
+      {isStopped ? (
+        <button
+          onClick={handleButtonToggle}
+          className="rounded-full bg-[#46b780] p-4 text-2xl text-neutral-100 w-14 h-14 hover:shadow-lg hover:shadow-neutral-800 transition-all"
+        >
+          <Play className="ml-[0.2rem]" />
+        </button>
+      ) : (
+        <button
+          onClick={handleButtonToggle}
+          className="rounded-full bg-[#ff4252] p-4 text-2xl text-neutral-100 w-14 h-14 hover:shadow-lg hover:shadow-neutral-800 transition-all"
+        >
+          <StopCircle className="text-white" />
+        </button>
+      )}
+    </>
+  );
+};
