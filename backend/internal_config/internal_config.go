@@ -52,15 +52,12 @@ func loadEnvFile(envFile string) error {
 
 func LoadConfig() *Config {
 	once.Do(func() {
-		// Determine which env file to load
-		envFile := ".env"
-		if os.Getenv("GO_ENV") == "test" {
-			envFile = ".env.test"
-		}
-
-		err := loadEnvFile(envFile)
-		if err != nil {
-			log.Printf("Warning: could not load %s file: %v", envFile, err)
+		if os.Getenv("GO_ENV") != "production" {
+			envFile := ".env"
+			if os.Getenv("GO_ENV") == "test" {
+				envFile = ".env.test"
+			}
+			loadEnvFile(envFile)
 		}
 
 		config = &Config{
@@ -79,7 +76,11 @@ func getEnv(key string, defaultValue ...string) string {
 	if value, exists := os.LookupEnv(key); exists {
 		return value
 	}
-	return defaultValue[0]
+	if len(defaultValue) > 0 {
+		return defaultValue[0]
+	}
+	log.Fatalf("Missing required environment variable: %s", key)
+	return "" // unreachable
 }
 
 // Added CORS for frontend, need to allow frontend origin otherwise requests get rejected
