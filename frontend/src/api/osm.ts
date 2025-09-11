@@ -5,7 +5,6 @@ import {
 } from "@/types/api";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { api } from "./api-client";
 
 export type OverpassElement = OverpassNode | OverpassWay;
 
@@ -94,8 +93,13 @@ export function useOSMQuery(osm_id: number, osm_type: string) {
   return useQuery<JobStatus, Error>({
     queryKey: ["osm", osm_id, osm_type],
     queryFn: async () => {
-      const res = await api.get<JobStatus>(`/osm/${osm_id}/${osm_type}`);
-      return res.data;
+      const res = await fetch(
+        `${
+          import.meta.env.VITE_BACKEND_URL || "http://localhost:8000"
+        }/osm/${osm_id}/${osm_type}`
+      );
+      const data: JobStatus = await res.json();
+      return data;
     },
     refetchInterval: (query) => {
       if (query.state.data) {
