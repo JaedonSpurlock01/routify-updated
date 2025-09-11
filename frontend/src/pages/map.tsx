@@ -17,7 +17,7 @@ export default function MapPage() {
   const { lineCount } = useThreeContext();
 
   return (
-    <main className="w-screen h-screen relative overflow-hidden">
+    <main className="w-screen h-svh relative overflow-hidden">
       <Canvas
         camera={{
           position: [0, 0, 10],
