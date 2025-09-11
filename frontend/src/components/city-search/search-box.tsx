@@ -188,13 +188,13 @@ export default function SearchBox({
                 <li
                   role="button"
                   key={city.osm_id}
-                  className="p-2 pb-4 border border-border rounded-3xl h-full bg-muted/50 hover:bg-muted opacity-0 translate-y-2 animate-fade-in"
+                  className="p-2 pb-4 border border-border rounded-xl h-full bg-muted/50 hover:bg-muted opacity-0 translate-y-2 animate-fade-in"
                   onClick={() => onResultClick(city)}
                 >
                   <img
-                    src="https://placehold.co/200"
+                    src={city.imgSrc}
                     alt={`Image of ${city.display_name}`}
-                    className="rounded-xl w-full"
+                    className="rounded-lg w-full aspect-square object-cover "
                   />
                   <p className="text-xs text-primary/90 mt-2 pl-1">
                     {city.display_name}

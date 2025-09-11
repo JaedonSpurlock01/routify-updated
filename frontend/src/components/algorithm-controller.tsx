@@ -76,8 +76,6 @@ export const AlgorithmController = () => {
       if (existingPath) {
         toast.success(
           <span>
-            <b>Path found!</b>
-            <br />
             {finalDistance && finalDistance !== -1 && (
               <>
                 Distance:{" "}
@@ -101,6 +99,8 @@ export const AlgorithmController = () => {
             style: {
               background: "#262626",
               color: "#fff",
+              borderRadius: "50px",
+              borderColor: "#404040",
             },
             duration: 8000,
           }
@@ -110,6 +110,8 @@ export const AlgorithmController = () => {
           style: {
             background: "#262626",
             color: "#fff",
+            borderRadius: "50px",
+            borderColor: "#404040",
           },
           duration: 5000,
         });

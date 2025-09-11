@@ -151,6 +151,8 @@ export const Scene = () => {
           style: {
             background: "#262626",
             color: "#fff",
+            borderRadius: "50px",
+            borderColor: "#404040",
           },
         }
       );
@@ -171,6 +173,8 @@ export const Scene = () => {
           style: {
             background: "#262626",
             color: "#fff",
+            borderRadius: "50px",
+            borderColor: "#404040",
           },
         }
       );
@@ -219,6 +223,8 @@ export const Scene = () => {
         style: {
           background: "#262626",
           color: "#fff",
+          borderRadius: "50px",
+          borderColor: "#404040",
         },
         duration: 5000,
       });
@@ -236,6 +242,8 @@ export const Scene = () => {
         style: {
           background: "#262626",
           color: "#fff",
+          borderRadius: "50px",
+          borderColor: "#404040",
         },
         duration: 5000,
       });

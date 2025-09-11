@@ -2,47 +2,57 @@ import { useAlgorithmContext } from "@/lib/context/context";
 import { AlgorithmNames } from "@/lib/models/pathfinding-instance";
 import { ChevronUp, ChevronDown } from "lucide-react";
 import { useState } from "react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
+import { Button } from "../ui/button";
 
 export const Dropdown = () => {
   const [isOpen, setIsOpen] = useState(false);
   const { selectedAlgorithm, setSelectedAlgorithm } = useAlgorithmContext();
 
   return (
-    <div>
-      <button
-        onClick={() => {
-          setIsOpen(!isOpen);
-        }}
-        className="relative bg-neutral-800 p-2 w-[10rem] h-9 hover:shadow-lg mt-2
-      hover:shadow-neutral-800 transition-all rounded-md font-medium select-none flex flex-col items-center"
+    <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          className="bg-muted hover:bg-neutral-700 h-12 border borer-border rounded-full w-40 sm:w-50
+          flex relative"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span className="text-[8px] text-primary absolute top-[4px] left-[1rem]">
+            Algorithm
+          </span>
+          <div className="flex flex-row justify-between w-full mt-1.5 overflow-hidden text-xs text-neutral-100">
+            {selectedAlgorithm}
+            {!isOpen ? <ChevronDown /> : <ChevronUp />}
+          </div>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        className="bg-neutral-800 border !border-neutral-700 rounded-2xl w-50"
       >
-        <span className="text-[8px] text-neutral-400 absolute top-[3px] left-[0.5rem]">
-          Algorithm
-        </span>
-        <div className="flex flex-row justify-between w-full mt-1.5 overflow-hidden text-xs text-neutral-100">
-          {selectedAlgorithm}
-          {!isOpen ? <ChevronDown /> : <ChevronUp />}
-        </div>
-      </button>
-
-      {isOpen ? (
-        <div className="flex flex-col bg-neutral-800 rounded-md mt-1 py-2 select-none">
+        <DropdownMenuGroup className="space-y-1">
           {AlgorithmNames.map((algorithm, index) => (
-            <button
-              onClick={() => {
-                setSelectedAlgorithm(algorithm);
-                setIsOpen(false);
-              }}
+            <DropdownMenuItem
               key={index}
-              className="text-neutral-100 text-xs p-1 font-light hover:bg-neutral-700 w-full text-left pl-2"
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedAlgorithm(algorithm);
+              }}
+              asChild
             >
-              {algorithm}
-            </button>
+              <Button className="w-full cursor-pointer text-xs text-neutral-300 hover:text-neutral-300 rounded-md hover:!bg-neutral-700 bg-neutral-800 dark:bg-neutral-800 hover:dark:bg-neutral-700 font-normal justify-start">
+                {algorithm}
+              </Button>
+            </DropdownMenuItem>
           ))}
-        </div>
-      ) : (
-        <></>
-      )}
-    </div>
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 };

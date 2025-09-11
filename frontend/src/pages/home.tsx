@@ -51,7 +51,7 @@ export default function HomePage() {
   return (
     <GridBeams>
       <main className="min-h-dvh flex flex-col items-center justify-center *:last:mt-10 py-20 md:pt-0">
-        <h1 className="text-3xl md:text-4xl xl:text-5xl font-bold">Routify</h1>
+        <img src="/logo-dark.png" alt="Routify Logo" className="w-48" />
         <p className="md:text-lg xl:text-xl text-muted-foreground font-light mt-2">
           The Ultimate City Pathfinding Visualizer
         </p>

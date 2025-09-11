@@ -1,14 +1,15 @@
 import type { NominatimSuggestion } from "@/types/overpass-suggestion";
 
-export const suggestedCities: NominatimSuggestion[] = [
+export const suggestedCities: (NominatimSuggestion & { imgSrc: string })[] = [
   {
-    name: "San Diego",
-    display_name: "San Diego, San Diego County, California, United States",
+    name: "Orlando",
+    display_name: "Orlando, Orange County, Florida, United States",
     type: "administrative",
-    osm_id: 253832,
+    osm_id: 1128379,
     osm_type: "relation",
-    boundingbox: ["32.5347979", "33.1141940", "-117.3098161", "-116.9057417"],
+    boundingbox: ["28.3480634", "28.6142830", "-81.5075377", "-81.1241435"],
     addresstype: "city",
+    imgSrc: "/orlando.png",
   },
   {
     name: "Seattle",
@@ -18,6 +19,7 @@ export const suggestedCities: NominatimSuggestion[] = [
     osm_type: "relation",
     boundingbox: ["47.4810022", "47.7341354", "-122.4596960", "-122.2244330"],
     addresstype: "city",
+    imgSrc: "/seattle.png",
   },
   {
     name: "Columbus",
@@ -27,6 +29,7 @@ export const suggestedCities: NominatimSuggestion[] = [
     osm_type: "relation",
     boundingbox: ["39.8086936", "40.1573082", "-83.2101797", "-82.7713119"],
     addresstype: "city",
+    imgSrc: "/columbus.png",
   },
   {
     name: "New York",
@@ -36,6 +39,7 @@ export const suggestedCities: NominatimSuggestion[] = [
     osm_type: "relation",
     boundingbox: ["40.4765780", "40.9176300", "-74.2588430", "-73.7002330"],
     addresstype: "city",
+    imgSrc: "/new-yrok.png",
   },
   {
     name: "Rome",
@@ -45,6 +49,7 @@ export const suggestedCities: NominatimSuggestion[] = [
     osm_type: "relation",
     boundingbox: ["41.6556417", "42.1410285", "12.2344669", "12.8557603"],
     addresstype: "city",
+    imgSrc: "/rome.png",
   },
   {
     name: "Amsterdam",
@@ -54,5 +59,6 @@ export const suggestedCities: NominatimSuggestion[] = [
     osm_type: "relation",
     boundingbox: ["52.2781742", "52.4310638", "4.7287563", "5.0791622"],
     addresstype: "city",
+    imgSrc: "/amsterdam.png",
   },
 ];
