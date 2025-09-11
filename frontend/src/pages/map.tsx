@@ -29,8 +29,10 @@ export default function MapPage() {
         <Scene />
         <OrbitControls
           enableDamping={true}
-          enableRotate={false}
+          enableRotate={true}
           enablePan={true}
+          minDistance={1}
+          maxDistance={50}
           mouseButtons={{
             LEFT: THREE.MOUSE.PAN,
             MIDDLE: THREE.MOUSE.DOLLY,
