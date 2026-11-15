@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as THREE from "three";
 import { CityMapBuilder, type CityMap } from "../city/city-map";
-import { Search, pathMeters } from "./search";
+import { createSearch, pathMeters } from "./search";
 import { Visualizer } from "./visualizer";
 
 // Drive the animation loop by hand instead of waiting on real frames.
@@ -81,7 +81,7 @@ describe("Visualizer comparison", () => {
 
     const { start, end } = visualizer.getState();
     for (const run of [a, b]) {
-      const reference = new Search(map, run.algorithm, start!.node, end!.node);
+      const reference = createSearch(map, run.algorithm, start!.node, end!.node);
       while (!reference.done) reference.step([]);
       expect(run.phase).toBe("done");
       expect(run.found).toBe(true);
@@ -128,6 +128,17 @@ describe("Visualizer comparison", () => {
     const grey = new Set<number>();
     for (let i = 0; i < map.lineCount * 3; i++) grey.add(Number(colors[i].toFixed(3)));
     expect(grey.size).toBe(1);
+  });
+
+  test("bidirectional matches Dijkstra's route with fewer expansions", () => {
+    const visualizer = placed(map);
+    visualizer.start("bidirectional", "dijkstra");
+    runFrames();
+    const [both, dijkstra] = visualizer.getState().comparison!.runs;
+    expect(both.found && dijkstra.found).toBe(true);
+    expect(both.meters).toBeCloseTo(dijkstra.meters, 6);
+    expect(both.nodesExpanded).toBeGreaterThan(0);
+    expect(both.nodesExpanded).toBeLessThan(dijkstra.nodesExpanded);
   });
 
   test("comparing an algorithm with itself is a normal single run", () => {

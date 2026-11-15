@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { CityMapBuilder, nearestNode, type CityMap } from "../city/city-map";
-import { ALGORITHMS, Search, pathMeters, type AlgorithmId } from "./search";
+import { ALGORITHMS, createSearch, pathMeters, type AlgorithmId } from "./search";
 
 /**
  * A 6x6 street grid (ids = row * 10 + col) with one long diagonal shortcut
@@ -30,7 +30,7 @@ function buildGrid(): { map: CityMap; index: (id: number) => number } {
 }
 
 function run(map: CityMap, algorithm: AlgorithmId, start: number, goal: number) {
-  const search = new Search(map, algorithm, start, goal);
+  const search = createSearch(map, algorithm, start, goal);
   const explored: number[] = [];
   let steps = 0;
   while (!search.done) {
@@ -106,6 +106,39 @@ describe("Search", () => {
     expect(pathMeters(map, astar.search.path())).toBeCloseTo(shortest, 3);
     expect(dijkstra.search.path()).toHaveLength(10); // through the grid
     expect(astar.steps).toBeLessThanOrEqual(dijkstra.steps);
+  });
+
+  test("bidirectional search finds Dijkstra's distance with less work", () => {
+    const dijkstra = run(map, "dijkstra", start, goal);
+    const both = run(map, "bidirectional", start, goal);
+    expect(pathMeters(map, both.search.path())).toBeCloseTo(
+      pathMeters(map, dijkstra.search.path()),
+      3
+    );
+    expect(both.search.path()).toHaveLength(10);
+    expect(both.steps).toBeLessThanOrEqual(dijkstra.steps);
+  });
+
+  test("bidirectional search is shortest between every pair of nodes", () => {
+    for (let from = 0; from < map.nodeCount; from++) {
+      for (let to = 0; to < map.nodeCount; to++) {
+        const dijkstra = run(map, "dijkstra", from, to).search;
+        const both = run(map, "bidirectional", from, to).search;
+        expect(both.found).toBe(dijkstra.found);
+        if (!both.found) continue;
+        expectWalk(map, both.path(), from, to);
+        expect(pathMeters(map, both.path())).toBeCloseTo(
+          pathMeters(map, dijkstra.path()),
+          3
+        );
+      }
+    }
+  });
+
+  test("bidirectional search reports each explored line once", () => {
+    const { explored } = run(map, "bidirectional", start, goal);
+    expect(explored.length).toBeGreaterThan(0);
+    expect(new Set(explored).size).toBe(explored.length);
   });
 
   test("BFS minimises hops, not distance", () => {

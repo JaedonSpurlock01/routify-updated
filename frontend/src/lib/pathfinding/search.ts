@@ -4,6 +4,7 @@ import { haversineMeters } from "../geo";
 export const ALGORITHMS = [
   { id: "astar", label: "A* Search", short: "A*" },
   { id: "dijkstra", label: "Dijkstra's Search", short: "Dijkstra" },
+  { id: "bidirectional", label: "Bidirectional Search", short: "Bidirectional" },
   { id: "greedy", label: "Greedy Search", short: "Greedy" },
   { id: "bfs", label: "Breadth-First Search", short: "BFS" },
   { id: "dfs", label: "Depth-First Search", short: "DFS" },
@@ -13,9 +14,8 @@ export type AlgorithmId = (typeof ALGORITHMS)[number]["id"];
 
 export const algorithmInfo = (id: AlgorithmId) => ALGORITHMS.find((a) => a.id === id)!;
 
-// Node states. Unseen is 0, the typed array default.
-const OPEN = 1;
-const CLOSED = 2;
+/** The algorithms that grow a single frontier from the start. */
+type SingleFrontierId = Exclude<AlgorithmId, "bidirectional">;
 
 /**
  * One run of a pathfinding algorithm over a `CityMap`, advanced a node at a
@@ -25,7 +25,35 @@ const CLOSED = 2;
  * that became fully explored. Afterwards `found` says whether the goal was
  * reached and `path` gives the route.
  */
-export class Search {
+export interface PathSearch {
+  readonly done: boolean;
+  readonly found: boolean;
+  /** Nodes taken off the frontier and expanded so far. */
+  readonly expanded: number;
+  /** Expands one node, appending newly explored line indices to `explored`. */
+  step(explored: number[]): void;
+  /** Line indices of the route found, ordered from the goal back to the start. */
+  path(): number[];
+}
+
+/** Starts a search with the chosen algorithm. */
+export function createSearch(
+  map: CityMap,
+  algorithm: AlgorithmId,
+  start: number,
+  goal: number
+): PathSearch {
+  return algorithm === "bidirectional"
+    ? new BidirectionalSearch(map, start, goal)
+    : new Search(map, algorithm, start, goal);
+}
+
+// Node states. Unseen is 0, the typed array default.
+const OPEN = 1;
+const CLOSED = 2;
+
+/** A*, Dijkstra, Greedy, BFS and DFS: one frontier growing from the start. */
+export class Search implements PathSearch {
   done = false;
   found = false;
   /** Nodes taken off the frontier and expanded so far. */
@@ -43,7 +71,7 @@ export class Search {
   private readonly prevNode: Int32Array;
   private readonly prevLine: Int32Array;
 
-  constructor(map: CityMap, algorithm: AlgorithmId, start: number, goal: number) {
+  constructor(map: CityMap, algorithm: SingleFrontierId, start: number, goal: number) {
     this.map = map;
     this.goal = goal;
     this.relaxes = algorithm === "astar" || algorithm === "dijkstra";
@@ -66,7 +94,6 @@ export class Search {
     this.frontier.push(start, 0);
   }
 
-  /** Expands one node, appending newly explored line indices to `explored`. */
   step(explored: number[]): void {
     if (this.done) return;
     const { state, cost, prevNode, prevLine, frontier, map } = this;
@@ -114,7 +141,6 @@ export class Search {
     }
   }
 
-  /** Line indices of the route found, ordered from the goal back to the start. */
   path(): number[] {
     const lines: number[] = [];
     if (!this.found) return lines;
@@ -132,6 +158,144 @@ export class Search {
       nodeLat[this.goal],
       nodeLon[this.goal]
     );
+  }
+}
+
+/**
+ * Bidirectional Dijkstra: one Dijkstra search grows from the start and another
+ * from the goal, taking turns, and the route is stitched together where they
+ * meet. It finds the true shortest route while expanding far fewer nodes than
+ * a single Dijkstra search, whose frontier has to cover the whole distance.
+ *
+ * The first node both searches reach is not necessarily on the shortest route,
+ * so the search keeps the best meeting found so far and only stops once the
+ * two frontiers' nearest unexpanded distances add up to at least that length:
+ * no route still undiscovered could be shorter.
+ *
+ * Per-node state is stored for both directions in one array each, the goal
+ * side's entries offset by `nodeCount`.
+ */
+class BidirectionalSearch implements PathSearch {
+  done = false;
+  found = false;
+  expanded = 0;
+
+  private readonly map: CityMap;
+  private readonly frontiers: readonly [MinHeap, MinHeap];
+  private readonly closed: Uint8Array;
+  private readonly cost: Float64Array;
+  private readonly prevNode: Int32Array;
+  private readonly prevLine: Int32Array;
+  /** Which direction expands next: 0 from the start, 1 from the goal. */
+  private side = 0;
+  /** Length of the best route found so far, and the node where its halves join. */
+  private best = Infinity;
+  private meeting = -1;
+
+  constructor(map: CityMap, start: number, goal: number) {
+    const n = map.nodeCount;
+    this.map = map;
+    this.frontiers = [new MinHeap(), new MinHeap()];
+    this.closed = new Uint8Array(2 * n);
+    this.cost = new Float64Array(2 * n).fill(Infinity);
+    this.prevNode = new Int32Array(2 * n).fill(-1);
+    this.prevLine = new Int32Array(2 * n).fill(-1);
+
+    this.cost[start] = 0;
+    this.cost[n + goal] = 0;
+    this.frontiers[0].push(start, 0);
+    this.frontiers[1].push(goal, 0);
+    if (start === goal) {
+      this.best = 0;
+      this.meeting = start;
+    }
+  }
+
+  step(explored: number[]): void {
+    if (this.done) return;
+    const { map, closed, cost, prevNode, prevLine } = this;
+    const n = map.nodeCount;
+
+    // Once either direction runs dry it has seen its whole component, and once
+    // the frontiers together are at least as far out as the best route, nothing
+    // shorter is left to find. Either way the best meeting so far is final.
+    const nearestFromStart = this.nearest(0);
+    const nearestFromGoal = this.nearest(1);
+    if (nearestFromStart + nearestFromGoal >= this.best) {
+      this.done = true;
+      this.found = this.meeting !== -1;
+      return;
+    }
+
+    const side = this.side;
+    this.side = 1 - side;
+    const own = side * n;
+    const other = n - own;
+    const node = this.frontiers[side].pop();
+    closed[own + node] = 1;
+    this.expanded++;
+    // The other direction reported this node's lines if it expanded it first.
+    const reports = closed[other + node] === 0;
+
+    const end = map.adjStart[node + 1];
+    for (let slot = map.adjStart[node]; slot < end; slot++) {
+      const next = map.adjNode[slot];
+      const line = map.adjLine[slot];
+      const nextClosed = closed[own + next] === 1;
+
+      if (reports && (nextClosed || closed[other + next] === 1)) {
+        explored.push(line); // both ends expanded
+      }
+
+      if (!nextClosed) {
+        const nextCost = cost[own + node] + map.lineMeters[line];
+        if (nextCost < cost[own + next]) {
+          cost[own + next] = nextCost;
+          prevNode[own + next] = node;
+          prevLine[own + next] = line;
+          this.frontiers[side].push(next, nextCost);
+        }
+      }
+
+      // Infinity until the other direction has reached `next`.
+      const through = cost[own + next] + cost[other + next];
+      if (through < this.best) {
+        this.best = through;
+        this.meeting = next;
+      }
+    }
+  }
+
+  path(): number[] {
+    const lines: number[] = [];
+    if (!this.found) return lines;
+    const { prevNode, prevLine, meeting } = this;
+    const n = this.map.nodeCount;
+
+    // The goal's half runs from the meeting node out to the goal, so flip it.
+    for (let at = meeting; prevLine[n + at] !== -1; at = prevNode[n + at]) {
+      lines.push(prevLine[n + at]);
+    }
+    lines.reverse();
+    for (let at = meeting; prevLine[at] !== -1; at = prevNode[at]) {
+      lines.push(prevLine[at]);
+    }
+    return lines;
+  }
+
+  /**
+   * Distance of the closest node a direction has yet to expand, or Infinity if
+   * it has none. Drops stale entries left behind by re-queued nodes first.
+   */
+  private nearest(side: number): number {
+    const frontier = this.frontiers[side];
+    const own = side * this.map.nodeCount;
+    for (;;) {
+      const node = frontier.peek();
+      if (node === -1) return Infinity;
+      if (this.closed[own + node] === 0) return frontier.peekPriority();
+      frontier.pop();
+    }
   }
 }
 
@@ -191,6 +355,16 @@ class MinHeap implements Frontier {
     }
     nodes[i] = node;
     priorities[i] = priority;
+  }
+
+  /** The node `pop` would return, or -1 when empty. */
+  peek() {
+    return this.nodes.length === 0 ? -1 : this.nodes[0];
+  }
+
+  /** Priority of the node `peek` returns. */
+  peekPriority() {
+    return this.priorities[0];
   }
 
   pop() {

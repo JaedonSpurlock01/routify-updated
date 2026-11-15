@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { nearestNode, type CityMap } from "../city/city-map";
-import { Search, pathMeters, type AlgorithmId } from "./search";
+import { createSearch, pathMeters, type AlgorithmId } from "./search";
 
 export type VisualizerStatus = "idle" | "searching" | "tracing" | "done";
 
@@ -193,7 +193,7 @@ export class Visualizer {
       return true;
     }
 
-    const search = new Search(this.map, algorithm, start.node, end.node);
+    const search = createSearch(this.map, algorithm, start.node, end.node);
     const startedAt = performance.now();
     const explored: number[] = [];
     this.setState({ status: "searching", result: null });
@@ -279,7 +279,7 @@ export class Visualizer {
     const startedAt = performance.now();
     const explored: number[] = [];
     const runs = algorithms.map((algorithm) => ({
-      search: new Search(this.map, algorithm, start, goal),
+      search: createSearch(this.map, algorithm, start, goal),
       route: [] as number[],
       drawn: 0,
       perFrame: 0,
