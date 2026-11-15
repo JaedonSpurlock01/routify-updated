@@ -104,7 +104,8 @@ describe("Visualizer comparison", () => {
         seen.add([0, 1, 2].map((k) => colors[i + k].toFixed(2)).join(","));
       }
     };
-    collect(visualizer.mesh.instanceColor!.array);
+    const explored = visualizer.exploredMesh!;
+    collect(explored.instanceColor!.array.subarray(0, explored.count * 3));
     for (const ribbon of visualizer.routeRibbons) collect(ribbon.colorArray);
     const key = (hex: string, tint = 0) => {
       const c = new THREE.Color(hex).lerp(new THREE.Color("#ffffff"), tint);
@@ -118,7 +119,7 @@ describe("Visualizer comparison", () => {
     expect(seen.has(key(COLORS.compareB, 0.35))).toBe(true);
   });
 
-  test("stop clears the comparison and repaints the map", () => {
+  test("stop clears the comparison and leaves only the map", () => {
     const visualizer = placed(map);
     visualizer.start("dijkstra", "dfs");
     runFrames(3);
@@ -128,6 +129,17 @@ describe("Visualizer comparison", () => {
     const grey = new Set<number>();
     for (let i = 0; i < map.lineCount * 3; i++) grey.add(Number(colors[i].toFixed(3)));
     expect(grey.size).toBe(1);
+    expect(visualizer.exploredMesh!.count).toBe(0);
+  });
+
+  test("each frame uploads explored lines as one contiguous range", () => {
+    const visualizer = placed(map);
+    visualizer.start("bidirectional");
+    runFrames(2);
+    const explored = visualizer.exploredMesh!;
+    expect(explored.count).toBeGreaterThan(0);
+    expect(explored.instanceMatrix.updateRanges).toHaveLength(2); // one per frame
+    expect(visualizer.mesh.instanceMatrix.updateRanges).toHaveLength(0);
   });
 
   test("bidirectional matches Dijkstra's route with fewer expansions", () => {

@@ -106,8 +106,10 @@ const STYLE = {
 const ROUTE_WIDTH = 0.05;
 const ROUTE_Z = [0.008, 0.009] as const;
 
-/** Past this many dirty ranges a single full-buffer upload is cheaper. */
-const MAX_UPDATE_RANGES = 512;
+/** Smallest explored-line overlay worth allocating, in lines. */
+const MIN_EXPLORED_CAPACITY = 4096;
+/** Past this many recoloured lines in a frame, one span upload beats one call per line. */
+const MAX_RECOLOUR_RANGES = 32;
 
 /**
  * Draws a city and plays pathfinding back over it.
@@ -120,7 +122,7 @@ const MAX_UPDATE_RANGES = 512;
 export class Visualizer {
   /** Everything the visualizer draws: add this to a scene. */
   readonly object = new THREE.Group();
-  /** The road network, one instance per line. */
+  /** The road network, one instance per line. Only repainted when its colour changes. */
   readonly mesh: THREE.InstancedMesh;
   /** Playback speed in expansions per second; Infinity is instant. Read every frame. */
   speed = DEFAULT_SPEED;
@@ -128,12 +130,25 @@ export class Visualizer {
   onInvalidate: (() => void) | null = null;
 
   private readonly map: CityMap;
-  private readonly matrices: THREE.InstancedBufferAttribute;
-  private readonly colorsAttr: THREE.InstancedBufferAttribute;
   private colors: Palette;
   /** Which comparison run explored or routed through each line; null outside comparisons. */
   private owner: Uint8Array | null = null;
+  /** Each line's slot in the explored overlay during a comparison, or -1; null otherwise. */
+  private slotOf: Int32Array | null = null;
   private runId = 0;
+
+  /**
+   * Explored lines, drawn over the road network. Lines are appended in the
+   * order they are explored, so each frame uploads one contiguous run of new
+   * instances instead of scattered writes into the (much larger) road
+   * network buffers. Allocated by the first search that needs it, and only
+   * reallocated when a search explores more lines than it holds.
+   */
+  private explored: THREE.InstancedMesh | null = null;
+  /** First overlay slot not yet sent to the GPU. */
+  private uploadedTo = 0;
+  /** Already-uploaded overlay slots recoloured since the last upload. */
+  private recoloured: number[] = [];
 
   private state: VisualizerState = {
     status: "idle",
@@ -144,7 +159,6 @@ export class Visualizer {
   };
   private readonly listeners = new Set<() => void>();
 
-  private painted: number[] = [];
   private ribbons: RouteRibbon[] = [];
   private readonly ribbonMaterial = new THREE.MeshBasicMaterial({
     vertexColors: true,
@@ -152,33 +166,12 @@ export class Visualizer {
     toneMapped: false,
   });
   private frame = 0;
-  /** True while the next GPU upload is already going to send the whole buffer. */
-  private fullUpload = true;
 
   constructor(map: CityMap, colors: LineColors) {
     this.map = map;
     this.colors = toColors(colors);
 
-    const geometry = new THREE.PlaneGeometry(1, 1).translate(0.5, 0, 0);
-    const material = new THREE.MeshBasicMaterial({
-      side: THREE.DoubleSide,
-      toneMapped: false,
-      alphaToCoverage: true,
-    });
-    roundLineEnds(material);
-    this.mesh = new THREE.InstancedMesh(geometry, material, map.lineCount);
-    this.mesh.frustumCulled = false;
-    this.mesh.instanceColor = new THREE.InstancedBufferAttribute(
-      new Float32Array(map.lineCount * 3),
-      3
-    );
-    this.matrices = this.mesh.instanceMatrix;
-    this.colorsAttr = this.mesh.instanceColor;
-    this.matrices.setUsage(THREE.DynamicDrawUsage);
-    this.colorsAttr.setUsage(THREE.DynamicDrawUsage);
-    this.matrices.onUpload(() => {
-      this.fullUpload = false;
-    });
+    this.mesh = this.createLineMesh(map.lineCount);
     this.object.add(this.mesh);
 
     this.paintWholeMap();
@@ -238,12 +231,14 @@ export class Visualizer {
   /** Cancels any search and erases what it drew. The points stay. */
   stop(): void {
     cancelAnimationFrame(this.frame);
-    for (const line of this.painted) this.writeLine(line, "map");
-    this.painted = [];
+    if (this.explored) this.explored.count = 0;
+    this.uploadedTo = 0;
+    this.recoloured = [];
     for (const ribbon of this.ribbons) ribbon.dispose();
     this.ribbons = [];
     this.owner = null;
-    this.flush();
+    this.slotOf = null;
+    this.onInvalidate?.();
     const { status, result, comparison } = this.state;
     if (status !== "idle" || result || comparison) {
       this.setState({ status: "idle", result: null, comparison: null });
@@ -261,6 +256,8 @@ export class Visualizer {
   dispose(): void {
     cancelAnimationFrame(this.frame);
     for (const ribbon of this.ribbons) ribbon.dispose();
+    this.explored?.dispose();
+    this.mesh.dispose();
     this.mesh.geometry.dispose();
     (this.mesh.material as THREE.Material).dispose();
     this.ribbonMaterial.dispose();
@@ -277,6 +274,10 @@ export class Visualizer {
   private play(traces: Trace[]): void {
     const comparing = traces.length === 2;
     const owner = comparing ? (this.owner = new Uint8Array(this.map.lineCount)) : null;
+    if (comparing) this.slotOf = new Int32Array(this.map.lineCount).fill(-1);
+    // Each trace explores a line at most once and compared runs share a line's slot.
+    const explored = traces.reduce((sum, trace) => sum + trace.lines.length, 0);
+    this.reserveExplored(Math.min(explored, this.map.lineCount));
     const goal = this.state.end!.node;
     const runs: Run[] = traces.map((trace, side) => ({
       trace,
@@ -332,8 +333,7 @@ export class Visualizer {
 
     const explore = (line: number, side: number, stats: RunStats) => {
       if (!owner) {
-        this.writeLine(line, "search");
-        this.painted.push(line);
+        this.appendExplored(line, this.colors.search);
         stats.linesExplored++;
         return;
       }
@@ -415,14 +415,46 @@ export class Visualizer {
     this.frame = requestAnimationFrame(frame);
   }
 
-  /** Paints a line by which comparison runs explored it. */
+  /** Paints a line by which comparison runs explored it, recolouring it if already drawn. */
   private paintOwned(line: number): void {
     const bits = this.owner![line];
     const c = this.colors;
     const color =
       (bits & EXPLORED_BOTH) === EXPLORED_BOTH ? c.search : bits & EXPLORED[0] ? c.compareA : c.compareB;
-    this.writeLine(line, "search", color);
-    this.painted.push(line);
+    const slot = this.slotOf![line];
+    if (slot === -1) {
+      this.slotOf![line] = this.appendExplored(line, color);
+      return;
+    }
+    color.toArray(this.explored!.instanceColor!.array, slot * 3);
+    if (slot < this.uploadedTo) this.recoloured.push(slot);
+  }
+
+  /** Makes sure the explored overlay can hold `lines` lines, emptying it. */
+  private reserveExplored(lines: number): void {
+    const current = this.explored;
+    if (current && current.instanceMatrix.count >= lines) {
+      current.count = 0;
+      return;
+    }
+    if (current) {
+      current.removeFromParent();
+      current.dispose();
+    }
+    const mesh = this.createLineMesh(Math.max(lines, MIN_EXPLORED_CAPACITY));
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.instanceColor!.setUsage(THREE.DynamicDrawUsage);
+    mesh.count = 0;
+    this.explored = mesh;
+    this.object.add(mesh);
+  }
+
+  /** Draws a line in the explored overlay and returns its slot. */
+  private appendExplored(line: number, color: THREE.Color): number {
+    const mesh = this.explored!;
+    const slot = mesh.count++;
+    this.writeLine(mesh, slot, line, "search", color);
+    return slot;
   }
 
   /** Builds a trace's route ribbon, hidden until playback reaches it. */
@@ -440,6 +472,11 @@ export class Visualizer {
     return ribbon;
   }
 
+  /** The explored-line overlay, for tests; null before the first search. */
+  get exploredMesh(): THREE.InstancedMesh | null {
+    return this.explored;
+  }
+
   /** The route ribbons on screen, for tests. */
   get routeRibbons(): readonly RouteRibbon[] {
     return this.ribbons;
@@ -447,27 +484,43 @@ export class Visualizer {
 
   // ── Painting ─────────────────────────────────────────────────────────────
 
-  /** Paints every line in the map colour, leaving an on-screen search untouched. */
+  /** Paints every line of the road network in the map colour, as one upload. */
   private paintWholeMap(): void {
-    this.uploadEverything();
-    const searched = new Set(this.painted);
+    const color = this.colors.map;
     for (let line = 0; line < this.map.lineCount; line++) {
-      if (!searched.has(line)) this.writeLine(line, "map");
+      this.writeLine(this.mesh, line, line, "map", color);
     }
-    this.flush();
+    this.mesh.instanceMatrix.needsUpdate = true;
+    this.mesh.instanceColor!.needsUpdate = true;
+    this.onInvalidate?.();
   }
 
-  private uploadEverything(): void {
-    this.matrices.clearUpdateRanges();
-    this.colorsAttr.clearUpdateRanges();
-    this.fullUpload = true;
+  /** An instanced mesh of `capacity` round-ended lines, sharing the road network's geometry and material. */
+  private createLineMesh(capacity: number): THREE.InstancedMesh {
+    const base = this.mesh as THREE.InstancedMesh | undefined;
+    const geometry = base?.geometry ?? new THREE.PlaneGeometry(1, 1).translate(0.5, 0, 0);
+    let material = base?.material as THREE.MeshBasicMaterial | undefined;
+    if (!material) {
+      material = new THREE.MeshBasicMaterial({
+        side: THREE.DoubleSide,
+        toneMapped: false,
+        alphaToCoverage: true,
+      });
+      roundLineEnds(material);
+    }
+    const mesh = new THREE.InstancedMesh(geometry, material, capacity);
+    mesh.frustumCulled = false;
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+    return mesh;
   }
 
-  /** Writes one line's instance transform and colour straight into the GPU buffers. */
+  /** Writes a line's transform and colour into instance `index` of `target`. */
   private writeLine(
+    target: THREE.InstancedMesh,
+    index: number,
     line: number,
     style: keyof typeof STYLE,
-    color: THREE.Color = this.colors[style]
+    color: THREE.Color
   ): void {
     const { nodeX, nodeY, lineFrom, lineTo } = this.map;
     const { width, z } = STYLE[style];
@@ -484,8 +537,8 @@ export class Visualizer {
     const span = length + width;
 
     // Column-major: X axis along the segment, Y axis across it, then position.
-    const m = this.matrices.array;
-    const o = line * 16;
+    const m = target.instanceMatrix.array;
+    const o = index * 16;
     m[o] = ux * span;
     m[o + 1] = uy * span;
     m[o + 4] = -uy * width;
@@ -496,25 +549,45 @@ export class Visualizer {
     m[o + 14] = z;
     m[o + 15] = 1;
 
-    const c = this.colorsAttr.array;
-    c[line * 3] = color.r;
-    c[line * 3 + 1] = color.g;
-    c[line * 3 + 2] = color.b;
-
-    // Upload only what changed: a full upload is tens of megabytes per frame
-    // on a big city. Past a point, though, one big upload beats many small ones.
-    if (this.fullUpload) return;
-    if (this.matrices.updateRanges.length >= MAX_UPDATE_RANGES) {
-      this.uploadEverything();
-      return;
-    }
-    this.matrices.addUpdateRange(o, 16);
-    this.colorsAttr.addUpdateRange(line * 3, 3);
+    const c = target.instanceColor!.array;
+    c[index * 3] = color.r;
+    c[index * 3 + 1] = color.g;
+    c[index * 3 + 2] = color.b;
   }
 
+  /**
+   * Sends the overlay's new lines to the GPU as one contiguous range per
+   * buffer (plus any recoloured ones), and asks for a frame.
+   */
   private flush(): void {
-    this.matrices.needsUpdate = true;
-    this.colorsAttr.needsUpdate = true;
+    const mesh = this.explored;
+    if (mesh) {
+      const matrices = mesh.instanceMatrix;
+      const colors = mesh.instanceColor!;
+      const from = this.uploadedTo;
+      const to = mesh.count;
+      if (to > from) {
+        matrices.addUpdateRange(from * 16, (to - from) * 16);
+        colors.addUpdateRange(from * 3, (to - from) * 3);
+        matrices.needsUpdate = true;
+        colors.needsUpdate = true;
+      }
+      const recoloured = this.recoloured;
+      if (recoloured.length > MAX_RECOLOUR_RANGES) {
+        let low = Infinity;
+        let high = -Infinity;
+        for (const slot of recoloured) {
+          low = Math.min(low, slot);
+          high = Math.max(high, slot);
+        }
+        colors.addUpdateRange(low * 3, (high - low + 1) * 3);
+      } else {
+        for (const slot of recoloured) colors.addUpdateRange(slot * 3, 3);
+      }
+      if (recoloured.length > 0) colors.needsUpdate = true;
+      this.uploadedTo = to;
+      this.recoloured = [];
+    }
     this.onInvalidate?.();
   }
 
