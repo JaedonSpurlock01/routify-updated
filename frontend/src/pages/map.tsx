@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Navigate } from "react-router-dom";
 import { OrbitControls } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
@@ -10,6 +10,8 @@ import { Scene } from "@/components/map/scene";
 import {
   useMapShortcuts,
   useSearchResultToast,
+  useSoundEffects,
+  useThunderShake,
 } from "@/components/map/use-map-controls";
 import type { AlgorithmId } from "@/lib/pathfinding/search";
 import { Visualizer } from "@/lib/pathfinding/visualizer";
@@ -52,6 +54,8 @@ function MapView({ city }: { city: City }) {
   );
 
   useEffect(() => () => visualizer.dispose(), [visualizer]);
+  /** Wraps just the map canvas, so thunder shakes the map and not the controls. */
+  const canvasFrame = useRef<HTMLDivElement>(null);
 
   // Start far enough back to see the whole city (the camera's vertical FOV is 75°).
   const cameraDistance = useMemo(() => {
@@ -64,33 +68,35 @@ function MapView({ city }: { city: City }) {
   return (
     <MapSessionContext.Provider value={session}>
       <main className="h-svh relative overflow-hidden">
-        <Canvas
-          frameloop="demand"
-          dpr={[1, 2]}
-          camera={{
-            position: [0, 0, cameraDistance],
-            near: 0.01,
-            far: cameraDistance * 20,
-          }}
-          gl={{ antialias: true, powerPreference: "high-performance" }}
-        >
-          <color attach="background" args={[colors.background]} />
-          <Scene />
-          <OrbitControls
-            enableDamping
-            minDistance={0.5}
-            maxDistance={cameraDistance * 4}
-            mouseButtons={{
-              LEFT: THREE.MOUSE.PAN,
-              MIDDLE: THREE.MOUSE.DOLLY,
-              RIGHT: THREE.MOUSE.ROTATE,
+        <div ref={canvasFrame} className="absolute inset-0">
+          <Canvas
+            frameloop="demand"
+            dpr={[1, 2]}
+            camera={{
+              position: [0, 0, cameraDistance],
+              near: 0.01,
+              far: cameraDistance * 20,
             }}
-            touches={{ ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE }}
-          />
-        </Canvas>
+            gl={{ antialias: true, powerPreference: "high-performance" }}
+          >
+            <color attach="background" args={[colors.background]} />
+            <Scene />
+            <OrbitControls
+              enableDamping
+              minDistance={0.5}
+              maxDistance={cameraDistance * 4}
+              mouseButtons={{
+                LEFT: THREE.MOUSE.PAN,
+                MIDDLE: THREE.MOUSE.DOLLY,
+                RIGHT: THREE.MOUSE.ROTATE,
+              }}
+              touches={{ ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE }}
+            />
+          </Canvas>
+        </div>
 
         <Navbar />
-        <MapEffects />
+        <MapEffects canvasFrame={canvasFrame} />
         <ComparisonPanel />
 
         <div className="absolute bottom-6 right-6 max-w-[70vw] text-neutral-100 text-right pointer-events-none [&_a]:pointer-events-auto">
@@ -117,8 +123,10 @@ function MapView({ city }: { city: City }) {
 }
 
 /** Behaviour that needs the map session but renders nothing. */
-function MapEffects() {
+function MapEffects({ canvasFrame }: { canvasFrame: RefObject<HTMLDivElement | null> }) {
   useMapShortcuts();
   useSearchResultToast();
+  useSoundEffects();
+  useThunderShake(canvasFrame);
   return null;
 }

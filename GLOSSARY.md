@@ -59,4 +59,4 @@ The bar under the navbar that shows the cursor while a search is on screen. Drag
 _Avoid_: seek bar, progress bar
 
 **Skip to end**:
-Moving the cursor straight to the end of the traces. Routes still draw in over about a second; skipping again finishes them.
+Moving the cursor straight to the end of the traces. Routes still strike in over about a second; skipping again finishes them.

@@ -69,6 +69,8 @@ interface SettingsContextValue {
   setColor: (key: keyof Colors, hex: string) => void;
   bloom: boolean;
   setBloom: (bloom: boolean | ((current: boolean) => boolean)) => void;
+  sound: boolean;
+  setSound: (sound: boolean | ((current: boolean) => boolean)) => void;
 }
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
@@ -76,6 +78,7 @@ const SettingsContext = createContext<SettingsContextValue | null>(null);
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [colors, setColors] = useState(DEFAULT_COLORS);
   const [bloom, setBloom] = useState(true);
+  const [sound, setSound] = useState(true);
   const setColor = useCallback(
     (key: keyof Colors, hex: string) =>
       setColors((current) =>
@@ -84,8 +87,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     []
   );
   const value = useMemo(
-    () => ({ colors, setColor, bloom, setBloom }),
-    [colors, setColor, bloom]
+    () => ({ colors, setColor, bloom, setBloom, sound, setSound }),
+    [colors, setColor, bloom, sound]
   );
   return (
     <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>

@@ -15,7 +15,7 @@ const COMPARE_COLOR_OPTIONS: { key: keyof Colors; label: string }[] = [
 ];
 
 export const Display = () => {
-  const { colors, setColor, bloom, setBloom } = useSettings();
+  const { colors, setColor, bloom, setBloom, sound, setSound } = useSettings();
 
   return (
     <section>
@@ -52,6 +52,14 @@ export const Display = () => {
           className="ml-auto"
           checked={bloom}
           onCheckedChange={setBloom}
+        />
+      </label>
+      <label className="text-base flex items-center mt-3">
+        <span className="text-neutral-300">Sound</span>
+        <Switch
+          className="ml-auto"
+          checked={sound}
+          onCheckedChange={setSound}
         />
       </label>
     </section>

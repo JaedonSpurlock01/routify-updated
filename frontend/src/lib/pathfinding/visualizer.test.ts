@@ -210,6 +210,62 @@ describe("Visualizer playback", () => {
     expect(ribbon.mesh.parent).toBeNull();
   });
 
+  test("explored lines remember the expansion that revealed them, for their heat", () => {
+    const visualizer = placed(map);
+    visualizer.start("dijkstra");
+    runFrames();
+    const trace = runSearch(map, "dijkstra", 0, map.nodeCount - 1);
+    const explored = visualizer.exploredMesh!;
+    const births = explored.geometry.getAttribute("instanceBirth").array;
+    for (let k = 1; k <= trace.expanded; k++) {
+      for (let slot = trace.marks[k - 1]; slot < trace.marks[k]; slot++) expect(births[slot]).toBe(k);
+    }
+  });
+
+  test("a found route strikes in, flashes, then settles", () => {
+    const visualizer = placed(map);
+    visualizer.start("astar");
+    while (visualizer.getState().status !== "done") runFrames(1);
+    const bolt = visualizer.routeBolts[0].mesh;
+    expect(bolt.visible).toBe(true); // the flash outlasts the route drawing in
+    expect(queued).not.toBeNull();
+    expect(visualizer.pause()).toBe(false); // the search itself is over
+    runFrames();
+    expect(bolt.visible).toBe(false);
+  });
+
+  test("cues a found route's strike and thunder once, and not when scrubbing", () => {
+    const visualizer = placed(map);
+    const cues: string[] = [];
+    visualizer.subscribeCue((cue) => cues.push(cue));
+    visualizer.start("astar");
+    runFrames();
+    expect(cues).toEqual(["strike", "thunder"]);
+    visualizer.seek(0);
+    visualizer.seek(visualizer.getProgress()!.length);
+    expect(cues).toEqual(["strike", "thunder"]);
+  });
+
+  test("skipping a strike still lands its thunder", () => {
+    const visualizer = placed(map);
+    const cues: string[] = [];
+    visualizer.subscribeCue((cue) => cues.push(cue));
+    visualizer.start("astar");
+    visualizer.skipToEnd();
+    visualizer.skipToEnd();
+    expect(cues).toEqual(["strike", "thunder"]);
+  });
+
+  test("seeking to the end shows the route without striking it again", () => {
+    const visualizer = placed(map);
+    visualizer.start("astar");
+    runFrames();
+    visualizer.seek(0);
+    visualizer.seek(visualizer.getProgress()!.length);
+    expect(visualizer.getState().status).toBe("done");
+    expect(queued).toBeNull();
+  });
+
   test("a faster speed finishes in fewer frames", () => {
     const frames = (speed: number) => {
       const visualizer = placed(map);
@@ -302,7 +358,7 @@ describe("Visualizer playback controls", () => {
     expect(visualizer.getState()).toMatchObject({ status: "tracing", paused: false });
     expect(visualizer.getState().result?.found).toBe(true);
     runFrames(1);
-    expect(visualizer.getState().status).toBe("tracing"); // the route takes about a second
+    expect(visualizer.getState().status).toBe("tracing"); // the route takes a moment to strike in
 
     visualizer.skipToEnd(); // again: finish the route too
     expect(visualizer.getState().status).toBe("done");

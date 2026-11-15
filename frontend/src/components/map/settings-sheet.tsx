@@ -68,6 +68,7 @@ const KEYBINDS = [
   { keys: "D", desc: "Clear points" },
   { keys: "C", desc: "Reset map" },
   { keys: "B", desc: "Toggle bloom" },
+  { keys: "M", desc: "Toggle sound" },
 ];
 
 const Keybinds = () => (

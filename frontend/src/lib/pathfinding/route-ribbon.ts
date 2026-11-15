@@ -10,6 +10,48 @@ const SAMPLES_PER_RADIAN = 6;
 const MAX_CORNER_SAMPLES = 16;
 /** Longest a corner's miter may stretch, as a multiple of the half-width. */
 const MAX_MITER = 2;
+/** How far behind a strike's head its white-hot tip trails off, as a share of the route and in scene units. */
+const TIP_SHARE = 0.06;
+const MIN_TIP = 0.08;
+const MAX_TIP = 0.5;
+/** Where a strike's head sits when there is no strike: past any route's end. */
+const NO_HEAD = 1e9;
+
+const VERTEX = /* glsl */ `
+attribute vec3 color;
+attribute float along;
+varying vec3 vColor;
+varying float vAlong;
+void main() {
+  vColor = color;
+  vAlong = along;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
+const FRAGMENT = /* glsl */ `
+uniform float uHead;
+uniform float uTip;
+uniform float uLeader;
+uniform float uFlash;
+varying vec3 vColor;
+varying float vAlong;
+void main() {
+  // Clip the line the head is part-way along, so the strike moves smoothly.
+  if (vAlong > uHead) discard;
+  float glow = uFlash + uLeader * 1.6 * exp(-(uHead - vAlong) / uTip);
+  vec3 color = mix(vColor, vec3(1.0), clamp(glow, 0.0, 1.0) * 0.85) * (1.0 + glow);
+  gl_FragColor = vec4(color, 1.0);
+  #include <colorspace_fragment>
+}`;
+
+/** The ribbon's centreline, with each sample's distance from the goal. */
+export interface Centreline {
+  xs: Float32Array;
+  ys: Float32Array;
+  along: Float32Array;
+  /** The whole route's length, in scene units. */
+  length: number;
+}
 
 /**
  * A route drawn as one continuous ribbon whose turns bend along short curves,
@@ -18,21 +60,25 @@ const MAX_MITER = 2;
  * Built once for a whole route, in route order (goal back to start), and
  * revealed a route line at a time with `show`. Each route line owns a run of
  * vertices so it can be recoloured on its own, e.g. where two compared routes
- * overlap.
+ * overlap. `setStrike` lights it up while it strikes in (see `Lightning`).
  */
 export class RouteRibbon {
   readonly mesh: THREE.Mesh;
+  readonly centreline: Centreline;
 
   private readonly geometry: THREE.BufferGeometry;
+  private readonly material: THREE.ShaderMaterial;
   private readonly colors: THREE.BufferAttribute;
   /** Centreline samples belonging to route lines 0..k, for each k. */
   private readonly samplesThrough: Int32Array;
+  /** How far from the goal each route line starts. */
+  private readonly lineStart: Float32Array;
 
   constructor(
     map: CityMap,
     route: readonly number[],
     goal: number,
-    options: { width: number; z: number; color: THREE.Color; material: THREE.Material }
+    options: { width: number; z: number; color: THREE.Color }
   ) {
     const points = routePoints(map, route, goal);
     const { xs, ys, owners } = smoothCentreline(points);
@@ -43,6 +89,14 @@ export class RouteRibbon {
       while (i < count && owners[i] <= k) i++;
       this.samplesThrough[k] = i;
     }
+
+    const along = new Float32Array(count);
+    for (let i = 1; i < count; i++) along[i] = along[i - 1] + Math.hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1]);
+    const length = count ? along[count - 1] : 0;
+    this.centreline = { xs: Float32Array.from(xs), ys: Float32Array.from(ys), along, length };
+    // A line starts where the previous one's samples end: the quad bridging them is drawn with it.
+    this.lineStart = new Float32Array(route.length);
+    for (let k = 1; k < route.length; k++) this.lineStart[k] = along[Math.max(this.samplesThrough[k - 1] - 1, 0)];
 
     const positions = new Float32Array(count * 2 * 3);
     const half = options.width / 2;
@@ -61,16 +115,56 @@ export class RouteRibbon {
 
     const colors = new Float32Array(count * 2 * 3);
     for (let v = 0; v < count * 2; v++) options.color.toArray(colors, v * 3);
+    const vertexAlong = new Float32Array(count * 2);
+    for (let i = 0; i < count; i++) vertexAlong[i * 2] = vertexAlong[i * 2 + 1] = along[i];
 
     this.geometry = new THREE.BufferGeometry();
     this.geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     this.colors = new THREE.BufferAttribute(colors, 3);
     this.geometry.setAttribute("color", this.colors);
+    this.geometry.setAttribute("along", new THREE.BufferAttribute(vertexAlong, 1));
     this.geometry.setIndex(new THREE.BufferAttribute(indices, 1));
     this.geometry.setDrawRange(0, 0);
 
-    this.mesh = new THREE.Mesh(this.geometry, options.material);
+    this.material = new THREE.ShaderMaterial({
+      vertexShader: VERTEX,
+      fragmentShader: FRAGMENT,
+      uniforms: {
+        uHead: { value: NO_HEAD },
+        uTip: { value: Math.min(MAX_TIP, Math.max(MIN_TIP, length * TIP_SHARE)) },
+        uLeader: { value: 0 },
+        uFlash: { value: 0 },
+      },
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    });
+    this.mesh = new THREE.Mesh(this.geometry, this.material);
     this.mesh.frustumCulled = false;
+  }
+
+  /** How many route lines start before `distance` from the goal: those a strike's head has reached. */
+  linesReaching(distance: number): number {
+    const starts = this.lineStart;
+    let lo = 0;
+    let hi = starts.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (starts[mid] < distance) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  }
+
+  /**
+   * Lights the ribbon for a strike: clipped at `head` (distance from the
+   * goal; null for none) with a white-hot tip while `leading`, and washed
+   * towards white by `flash`.
+   */
+  setStrike(head: number | null, leading: boolean, flash: number): void {
+    const u = this.material.uniforms;
+    u.uHead.value = head ?? NO_HEAD;
+    u.uLeader.value = leading ? 1 : 0;
+    u.uFlash.value = flash;
   }
 
   /** Reveals the first `lines` route lines. */
@@ -95,6 +189,7 @@ export class RouteRibbon {
   dispose(): void {
     this.mesh.removeFromParent();
     this.geometry.dispose();
+    this.material.dispose();
   }
 }
 
