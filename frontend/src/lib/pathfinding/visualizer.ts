@@ -163,7 +163,9 @@ export class Visualizer {
     const material = new THREE.MeshBasicMaterial({
       side: THREE.DoubleSide,
       toneMapped: false,
+      alphaToCoverage: true,
     });
+    roundLineEnds(material);
     this.mesh = new THREE.InstancedMesh(geometry, material, map.lineCount);
     this.mesh.frustumCulled = false;
     this.mesh.instanceColor = new THREE.InstancedBufferAttribute(
@@ -473,18 +475,24 @@ export class Visualizer {
     const to = lineTo[line];
     const dx = nodeX[to] - nodeX[from];
     const dy = nodeY[to] - nodeY[from];
-    const scale = width / (Math.hypot(dx, dy) || 1);
+    const length = Math.hypot(dx, dy);
+    // Unit direction; a zero-length line still gets a (round) dot.
+    const ux = length ? dx / length : 1;
+    const uy = length ? dy / length : 0;
+    // The quad runs half a width past each end, where the shader rounds it off.
+    const half = width / 2;
+    const span = length + width;
 
     // Column-major: X axis along the segment, Y axis across it, then position.
     const m = this.matrices.array;
     const o = line * 16;
-    m[o] = dx;
-    m[o + 1] = dy;
-    m[o + 4] = -dy * scale;
-    m[o + 5] = dx * scale;
+    m[o] = ux * span;
+    m[o + 1] = uy * span;
+    m[o + 4] = -uy * width;
+    m[o + 5] = ux * width;
     m[o + 10] = 1;
-    m[o + 12] = nodeX[from];
-    m[o + 13] = nodeY[from];
+    m[o + 12] = nodeX[from] - ux * half;
+    m[o + 13] = nodeY[from] - uy * half;
     m[o + 14] = z;
     m[o + 15] = 1;
 
@@ -514,6 +522,62 @@ export class Visualizer {
     this.state = { ...this.state, ...patch };
     for (const listener of this.listeners) listener();
   }
+}
+
+/**
+ * Rounds both ends of every instanced line, so lines meeting at an angle join
+ * in a smooth round corner instead of overlapping square ends. Each instance's
+ * quad must already reach half its width past each end (see `writeLine`); the
+ * fragment shader trims those overhangs to semicircles. Only the ends are
+ * trimmed, so a line thinner than a pixel never loses its body.
+ */
+function roundLineEnds(material: THREE.MeshBasicMaterial): void {
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        "#include <common>",
+        `#include <common>
+varying vec2 vLinePos;
+varying float vLineSpan;
+varying float vLineRadius;`
+      )
+      .replace(
+        "#include <begin_vertex>",
+        `#include <begin_vertex>
+#ifdef USE_INSTANCING
+  float lineSpan = length(instanceMatrix[0].xy);
+  float lineWidth = length(instanceMatrix[1].xy);
+  vLinePos = vec2(position.x * lineSpan, position.y * lineWidth);
+  vLineSpan = lineSpan;
+  vLineRadius = lineWidth * 0.5;
+#endif`
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        `#include <common>
+varying vec2 vLinePos;
+varying float vLineSpan;
+varying float vLineRadius;`
+      )
+      .replace(
+        "#include <color_fragment>",
+        `#include <color_fragment>
+{
+  // How far past the line's end this pixel is, along the line; 0 along its body.
+  float along = vLinePos.x - clamp(vLinePos.x, vLineRadius, vLineSpan - vLineRadius);
+  float edge = length(vec2(along, vLinePos.y)) - vLineRadius;
+  float aa = fwidth(edge);
+  float coverage = along == 0.0 ? 1.0 : 1.0 - smoothstep(-aa, aa, edge);
+  #ifdef ALPHA_TO_COVERAGE
+    diffuseColor.a *= coverage;
+    if (diffuseColor.a <= 0.0) discard;
+  #else
+    if (coverage < 0.5) discard;
+  #endif
+}`
+      );
+  };
 }
 
 const WHITE = new THREE.Color("#ffffff");
