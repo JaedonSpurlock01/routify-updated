@@ -12,3 +12,8 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1_000_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
   return `${(bytes / 1_000_000_000).toFixed(2)} GB`;
 }
+
+/** A duration in milliseconds, e.g. "4.2 ms" or "33 ms". */
+export function formatMs(ms: number): string {
+  return ms < 10 ? `${ms.toFixed(1)} ms` : `${Math.round(ms).toLocaleString()} ms`;
+}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
+import { formatMs } from "@/lib/utils";
 import { useMapSession, useSettings, useVisualizerState } from "@/lib/state";
 
 /** Starts a search if one can start, explains why not, or stops the current one. */
@@ -74,8 +75,7 @@ export function useSearchResultToast() {
         km · <span className="text-green-400">{(result.meters / 1609.344).toFixed(2)}</span>{" "}
         mi
         <br />
-        Time: <span className="text-blue-400">{result.seconds.toFixed(2)}</span>{" "}
-        seconds
+        Search took <span className="text-blue-400">{formatMs(result.computeMs)}</span>
       </span>,
       { duration: 8000 }
     );

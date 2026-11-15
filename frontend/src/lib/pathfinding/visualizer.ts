@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { nearestNode, type CityMap } from "../city/city-map";
-import { createSearch, pathMeters, type AlgorithmId } from "./search";
+import { runSearch, type AlgorithmId, type Trace } from "./search";
 
 export type VisualizerStatus = "idle" | "searching" | "tracing" | "done";
 
@@ -13,8 +13,8 @@ export interface MapPoint {
 export interface SearchResult {
   found: boolean;
   meters: number;
-  /** Wall-clock time the search animation took. */
-  seconds: number;
+  /** Time the search itself took to compute. */
+  computeMs: number;
 }
 
 /** One side of a side-by-side comparison, updated live while it runs. */
@@ -25,8 +25,22 @@ export interface RunStats {
   meters: number;
   nodesExpanded: number;
   linesExplored: number;
-  /** Time until this search finished (or so far, while it is searching). */
-  seconds: number;
+  /**
+   * Time the search itself took to compute. Known from the start; the UI
+   * should hold it back until the run's playback leaves "searching".
+   */
+  computeMs: number;
+}
+
+/** One trace being played back, and how much of it is on screen. */
+interface Run {
+  trace: Trace;
+  /** Explored lines painted so far. */
+  shown: number;
+  /** Route lines painted so far, and how long the route has been drawing. */
+  routeShown: number;
+  routeMs: number;
+  stats: RunStats;
 }
 
 export interface Comparison {
@@ -72,6 +86,14 @@ const ROUTE_BOTH = 12;
 /** How often live comparison stats reach React while searches run. */
 const PUBLISH_INTERVAL_MS = 100;
 
+/** Playback speed in expansions per second; Infinity draws a whole trace at once. */
+export const DEFAULT_SPEED = 1800;
+/** How long a route takes to draw, however long it is. */
+const ROUTE_MS = 1000;
+/** Assumed length of the first frame, and the most one frame may advance. */
+const FRAME_MS = 1000 / 60;
+const MAX_FRAME_MS = 100;
+
 const STYLE = {
   map: { width: 0.01, z: 0 },
   search: { width: 0.025, z: 0.001 },
@@ -82,17 +104,17 @@ const STYLE = {
 const MAX_UPDATE_RANGES = 512;
 
 /**
- * Draws a city and animates pathfinding over it.
+ * Draws a city and plays pathfinding back over it.
  *
  * Owns the instanced mesh for the road network (add `mesh` to a scene), the
- * start/end points, and the search animation loop. React only needs to
- * forward input (`placePoint`, `start`, `stop`, …) and render `getState()`,
- * via `subscribe`.
+ * start/end points, and playback. A search runs to completion the moment it
+ * starts; what animates is its trace. React only needs to forward input
+ * (`placePoint`, `start`, `stop`, …) and render `getState()`, via `subscribe`.
  */
 export class Visualizer {
   readonly mesh: THREE.InstancedMesh;
-  /** Nodes expanded per animation frame. */
-  speed = 30;
+  /** Playback speed in expansions per second; Infinity is instant. Read every frame. */
+  speed = DEFAULT_SPEED;
   /** Called whenever the mesh changed and the scene needs another frame. */
   onInvalidate: (() => void) | null = null;
 
@@ -181,62 +203,17 @@ export class Visualizer {
   }
 
   /**
-   * Begins animating a search between the two points. No-op unless both are
-   * placed and idle. With `compareWith`, runs both algorithms at once, layered
-   * on the same map in their own colours.
+   * Runs a search between the two points, then plays its trace back on the
+   * map. No-op unless both points are placed and nothing is on screen. With
+   * `compareWith`, runs both algorithms and plays their traces on one cursor,
+   * layered on the same map in their own colours.
    */
   start(algorithm: AlgorithmId, compareWith: AlgorithmId | null = null): boolean {
     const { status, start, end } = this.state;
     if (status !== "idle" || !start || !end) return false;
-    if (compareWith && compareWith !== algorithm) {
-      this.startComparison([algorithm, compareWith], start.node, end.node);
-      return true;
-    }
-
-    const search = createSearch(this.map, algorithm, start.node, end.node);
-    const startedAt = performance.now();
-    const explored: number[] = [];
-    this.setState({ status: "searching", result: null });
-
-    const searchFrame = () => {
-      explored.length = 0;
-      for (let i = 0; i < this.speed && !search.done; i++) search.step(explored);
-      this.paint(explored, 0, explored.length, "search");
-
-      if (!search.done) {
-        this.frame = requestAnimationFrame(searchFrame);
-        return;
-      }
-
-      const path = search.path();
-      const result: SearchResult = {
-        found: search.found,
-        meters: pathMeters(this.map, path),
-        seconds: (performance.now() - startedAt) / 1000,
-      };
-      if (path.length === 0) {
-        this.setState({ status: "done", result });
-        return;
-      }
-
-      // Draw the route back from the goal, in about a second however long it is.
-      this.setState({ status: "tracing", result });
-      const perFrame = Math.max(2, Math.ceil(path.length / 60));
-      let drawn = 0;
-      const traceFrame = () => {
-        const until = Math.min(path.length, drawn + perFrame);
-        this.paint(path, drawn, until, "path");
-        drawn = until;
-        if (drawn < path.length) {
-          this.frame = requestAnimationFrame(traceFrame);
-        } else {
-          this.setState({ status: "done" });
-        }
-      };
-      this.frame = requestAnimationFrame(traceFrame);
-    };
-
-    this.frame = requestAnimationFrame(searchFrame);
+    const algorithms =
+      compareWith && compareWith !== algorithm ? [algorithm, compareWith] : [algorithm];
+    this.play(algorithms.map((id) => runSearch(this.map, id, start.node, end.node)));
     return true;
   }
 
@@ -267,35 +244,43 @@ export class Visualizer {
     (this.mesh.material as THREE.Material).dispose();
   }
 
-  // ── Comparison ───────────────────────────────────────────────────────────
+  // ── Playback ─────────────────────────────────────────────────────────────
 
   /**
-   * Races two searches frame by frame, each expanding `speed` nodes per
-   * frame, so the one that needs fewer expansions visibly finishes first.
-   * Each traces its route as soon as it finishes.
+   * Plays one or two traces back on a single cursor, counted in expansions and
+   * advanced at `speed` per second, so in a comparison the search that needed
+   * fewer expansions visibly finishes first. Each trace draws its route as
+   * soon as the cursor reaches its end.
    */
-  private startComparison(algorithms: [AlgorithmId, AlgorithmId], start: number, goal: number): void {
-    const owner = (this.owner = new Uint8Array(this.map.lineCount));
-    const startedAt = performance.now();
-    const explored: number[] = [];
-    const runs = algorithms.map((algorithm) => ({
-      search: createSearch(this.map, algorithm, start, goal),
-      route: [] as number[],
-      drawn: 0,
-      perFrame: 0,
+  private play(traces: Trace[]): void {
+    const comparing = traces.length === 2;
+    const owner = comparing ? (this.owner = new Uint8Array(this.map.lineCount)) : null;
+    const runs: Run[] = traces.map((trace) => ({
+      trace,
+      shown: 0,
+      routeShown: 0,
+      routeMs: 0,
       stats: {
-        algorithm,
+        algorithm: trace.algorithm,
         phase: "searching",
         found: false,
         meters: 0,
         nodesExpanded: 0,
         linesExplored: 0,
-        seconds: 0,
-      } as RunStats,
+        computeMs: trace.computeMs,
+      },
     }));
+    // A single run's result, revealed once its search has played out.
+    const result: SearchResult = {
+      found: traces[0].found,
+      meters: traces[0].meters,
+      computeMs: traces[0].computeMs,
+    };
     const id = ++this.runId;
     let sharedLines = 0;
     let sharedPathLines = 0;
+    let cursor = 0;
+    let last: number | null = null;
     let lastPublish = -Infinity;
 
     const publish = () => {
@@ -305,6 +290,10 @@ export class Visualizer {
         : phases.includes("tracing")
           ? "tracing"
           : "done";
+      if (!comparing) {
+        this.setState({ status, result: status === "searching" ? null : result });
+        return;
+      }
       this.setState({
         status,
         comparison: {
@@ -316,53 +305,72 @@ export class Visualizer {
       });
     };
 
+    const explore = (line: number, side: number, stats: RunStats) => {
+      if (!owner) {
+        this.writeLine(line, "search");
+        this.painted.push(line);
+        stats.linesExplored++;
+        return;
+      }
+      const bits = owner[line];
+      if (bits & EXPLORED[side]) return;
+      owner[line] = bits | EXPLORED[side];
+      stats.linesExplored++;
+      if (bits & EXPLORED[1 - side]) sharedLines++;
+      this.paintOwned(line);
+    };
+
+    const route = (line: number, side: number) => {
+      if (!owner) {
+        this.writeLine(line, "path");
+        this.painted.push(line);
+        return;
+      }
+      const bits = owner[line];
+      owner[line] = bits | ROUTE[side];
+      if (bits & ROUTE[1 - side]) sharedPathLines++;
+      this.paintOwned(line);
+    };
+
     const frame = (now: number) => {
-      let phaseChanged = false;
+      // Cap the step so a stalled or backgrounded tab doesn't leap ahead.
+      const elapsed = last === null ? FRAME_MS : Math.min(now - last, MAX_FRAME_MS);
+      last = now;
+      const instant = !Number.isFinite(this.speed);
+      cursor = instant ? Infinity : cursor + (this.speed * elapsed) / 1000;
       let drew = false;
+      let phaseChanged = false;
 
       runs.forEach((run, side) => {
-        const { search, stats } = run;
-        const mine = EXPLORED[side];
+        const { trace, stats } = run;
 
         if (stats.phase === "searching") {
-          explored.length = 0;
-          for (let i = 0; i < this.speed && !search.done; i++) search.step(explored);
-          for (const line of explored) {
-            const bits = owner[line];
-            if (bits & mine) continue;
-            owner[line] = bits | mine;
-            stats.linesExplored++;
-            if (bits & EXPLORED[1 - side]) sharedLines++;
-            this.paintOwned(line);
-            drew = true;
-          }
-          stats.nodesExpanded = search.expanded;
-          stats.seconds = (now - startedAt) / 1000;
+          const reached = Math.min(Math.floor(cursor), trace.expanded);
+          const until = trace.marks[reached];
+          for (let i = run.shown; i < until; i++) explore(trace.lines[i], side, stats);
+          drew ||= until > run.shown;
+          run.shown = until;
+          stats.nodesExpanded = reached;
+          if (reached < trace.expanded) return;
 
-          if (search.done) {
-            run.route = search.path();
-            stats.found = search.found;
-            stats.meters = pathMeters(this.map, run.route);
-            stats.phase = run.route.length > 0 ? "tracing" : "done";
-            // Draw the route back from the goal, in about a second however long it is.
-            run.perFrame = Math.max(2, Math.ceil(run.route.length / 60));
-            phaseChanged = true;
-          }
-          return;
+          stats.found = trace.found;
+          stats.meters = trace.meters;
+          stats.phase = trace.route.length > 0 ? "tracing" : "done";
+          phaseChanged = true;
+          if (!instant) return; // the route starts drawing next frame
         }
 
         if (stats.phase === "tracing") {
-          const until = Math.min(run.route.length, run.drawn + run.perFrame);
-          for (let i = run.drawn; i < until; i++) {
-            const line = run.route[i];
-            const bits = owner[line];
-            owner[line] = bits | ROUTE[side];
-            if (bits & ROUTE[1 - side]) sharedPathLines++;
-            this.paintOwned(line);
-          }
-          drew ||= until > run.drawn;
-          run.drawn = until;
-          if (run.drawn === run.route.length) {
+          // Draw the route back from the goal, in about a second however long it is.
+          const lines = trace.route;
+          run.routeMs += elapsed;
+          const until = instant
+            ? lines.length
+            : Math.min(lines.length, Math.ceil((lines.length * run.routeMs) / ROUTE_MS));
+          for (let i = run.routeShown; i < until; i++) route(lines[i], side);
+          drew ||= until > run.routeShown;
+          run.routeShown = until;
+          if (until === lines.length) {
             stats.phase = "done";
             phaseChanged = true;
           }
@@ -371,14 +379,14 @@ export class Visualizer {
 
       if (drew) this.flush();
       const finished = runs.every((run) => run.stats.phase === "done");
-      if (phaseChanged || finished || now - lastPublish >= PUBLISH_INTERVAL_MS) {
+      if (phaseChanged || (comparing && now - lastPublish >= PUBLISH_INTERVAL_MS)) {
         lastPublish = now;
         publish();
       }
       if (!finished) this.frame = requestAnimationFrame(frame);
     };
 
-    this.setState({ result: null });
+    this.setState({ result: null, comparison: null });
     publish();
     this.frame = requestAnimationFrame(frame);
   }
@@ -400,14 +408,6 @@ export class Visualizer {
   }
 
   // ── Painting ─────────────────────────────────────────────────────────────
-
-  private paint(lines: readonly number[], from: number, to: number, style: "search" | "path"): void {
-    for (let i = from; i < to; i++) {
-      this.writeLine(lines[i], style);
-      this.painted.push(lines[i]);
-    }
-    if (to > from) this.flush();
-  }
 
   /** Paints every line in the map colour, leaving an on-screen search untouched. */
   private paintWholeMap(): void {

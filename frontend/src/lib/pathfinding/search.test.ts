@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { CityMapBuilder, nearestNode, type CityMap } from "../city/city-map";
-import { ALGORITHMS, createSearch, pathMeters, type AlgorithmId } from "./search";
+import { ALGORITHMS, pathMeters, runSearch, type AlgorithmId } from "./search";
 
 /**
  * A 6x6 street grid (ids = row * 10 + col) with one long diagonal shortcut
@@ -30,14 +30,7 @@ function buildGrid(): { map: CityMap; index: (id: number) => number } {
 }
 
 function run(map: CityMap, algorithm: AlgorithmId, start: number, goal: number) {
-  const search = createSearch(map, algorithm, start, goal);
-  const explored: number[] = [];
-  let steps = 0;
-  while (!search.done) {
-    search.step(explored);
-    if (++steps > 10_000) throw new Error("search did not terminate");
-  }
-  return { search, explored, steps };
+  return runSearch(map, algorithm, start, goal);
 }
 
 /** Checks a goal→start line list really is a connected walk between the two. */
@@ -81,54 +74,54 @@ describe("Search", () => {
 
   for (const { id } of ALGORITHMS) {
     test(`${id} finds a connected route`, () => {
-      const { search } = run(map, id, start, goal);
-      expect(search.found).toBe(true);
-      expectWalk(map, search.path(), start, goal);
+      const trace = run(map, id, start, goal);
+      expect(trace.found).toBe(true);
+      expectWalk(map, trace.route, start, goal);
     });
 
     test(`${id} reports no route to an unreachable goal`, () => {
-      const { search } = run(map, id, start, index(1000));
-      expect(search.found).toBe(false);
-      expect(search.path()).toEqual([]);
+      const trace = run(map, id, start, index(1000));
+      expect(trace.found).toBe(false);
+      expect(trace.route).toEqual([]);
     });
 
     test(`${id} handles start === goal`, () => {
-      const { search } = run(map, id, start, start);
-      expect(search.found).toBe(true);
-      expect(search.path()).toEqual([]);
+      const trace = run(map, id, start, start);
+      expect(trace.found).toBe(true);
+      expect(trace.route).toEqual([]);
     });
   }
 
   test("dijkstra and A* agree on the shortest distance", () => {
     const dijkstra = run(map, "dijkstra", start, goal);
     const astar = run(map, "astar", start, goal);
-    const shortest = pathMeters(map, dijkstra.search.path());
-    expect(pathMeters(map, astar.search.path())).toBeCloseTo(shortest, 3);
-    expect(dijkstra.search.path()).toHaveLength(10); // through the grid
-    expect(astar.steps).toBeLessThanOrEqual(dijkstra.steps);
+    const shortest = pathMeters(map, dijkstra.route);
+    expect(pathMeters(map, astar.route)).toBeCloseTo(shortest, 3);
+    expect(dijkstra.route).toHaveLength(10); // through the grid
+    expect(astar.expanded).toBeLessThanOrEqual(dijkstra.expanded);
   });
 
   test("bidirectional search finds Dijkstra's distance with less work", () => {
     const dijkstra = run(map, "dijkstra", start, goal);
     const both = run(map, "bidirectional", start, goal);
-    expect(pathMeters(map, both.search.path())).toBeCloseTo(
-      pathMeters(map, dijkstra.search.path()),
+    expect(pathMeters(map, both.route)).toBeCloseTo(
+      pathMeters(map, dijkstra.route),
       3
     );
-    expect(both.search.path()).toHaveLength(10);
-    expect(both.steps).toBeLessThanOrEqual(dijkstra.steps);
+    expect(both.route).toHaveLength(10);
+    expect(both.expanded).toBeLessThanOrEqual(dijkstra.expanded);
   });
 
   test("bidirectional search is shortest between every pair of nodes", () => {
     for (let from = 0; from < map.nodeCount; from++) {
       for (let to = 0; to < map.nodeCount; to++) {
-        const dijkstra = run(map, "dijkstra", from, to).search;
-        const both = run(map, "bidirectional", from, to).search;
+        const dijkstra = run(map, "dijkstra", from, to);
+        const both = run(map, "bidirectional", from, to);
         expect(both.found).toBe(dijkstra.found);
         if (!both.found) continue;
-        expectWalk(map, both.path(), from, to);
-        expect(pathMeters(map, both.path())).toBeCloseTo(
-          pathMeters(map, dijkstra.path()),
+        expectWalk(map, both.route, from, to);
+        expect(pathMeters(map, both.route)).toBeCloseTo(
+          pathMeters(map, dijkstra.route),
           3
         );
       }
@@ -136,7 +129,7 @@ describe("Search", () => {
   });
 
   test("bidirectional search reports each explored line once", () => {
-    const { explored } = run(map, "bidirectional", start, goal);
+    const { lines: explored } = run(map, "bidirectional", start, goal);
     expect(explored.length).toBeGreaterThan(0);
     expect(new Set(explored).size).toBe(explored.length);
   });
@@ -144,15 +137,31 @@ describe("Search", () => {
   test("BFS minimises hops, not distance", () => {
     const bfs = run(map, "bfs", start, goal);
     const dijkstra = run(map, "dijkstra", start, goal);
-    expect(bfs.search.path()).toHaveLength(2); // the long detour
-    expect(pathMeters(map, bfs.search.path())).toBeGreaterThan(
-      pathMeters(map, dijkstra.search.path())
+    expect(bfs.route).toHaveLength(2); // the long detour
+    expect(pathMeters(map, bfs.route)).toBeGreaterThan(
+      pathMeters(map, dijkstra.route)
     );
   });
 
   test("only reports real lines as explored", () => {
-    const { explored } = run(map, "astar", start, goal);
+    const { lines: explored } = run(map, "astar", start, goal);
     expect(explored.length).toBeGreaterThan(0);
     for (const line of explored) expect(line).toBeLessThan(map.lineCount);
   });
+
+  for (const { id } of ALGORITHMS) {
+    test(`${id} records a consistent trace`, () => {
+      const trace = run(map, id, start, goal);
+      expect(trace.algorithm).toBe(id);
+      expect(trace.marks).toHaveLength(trace.expanded + 1);
+      expect(trace.marks[0]).toBe(0);
+      expect(trace.marks[trace.expanded]).toBe(trace.lines.length);
+      for (let k = 1; k <= trace.expanded; k++) {
+        expect(trace.marks[k]).toBeGreaterThanOrEqual(trace.marks[k - 1]);
+      }
+      expect(new Set(trace.lines).size).toBe(trace.lines.length);
+      expect(trace.meters).toBeCloseTo(pathMeters(map, trace.route), 6);
+      expect(trace.computeMs).toBeGreaterThanOrEqual(0);
+    });
+  }
 });

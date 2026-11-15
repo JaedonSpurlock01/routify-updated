@@ -3,7 +3,7 @@ import { Check, X } from "lucide-react";
 import { algorithmInfo } from "@/lib/pathfinding/search";
 import type { Comparison, RunStats } from "@/lib/pathfinding/visualizer";
 import { useSettings, useVisualizerState } from "@/lib/state";
-import { cn } from "@/lib/utils";
+import { cn, formatMs } from "@/lib/utils";
 
 interface Metric {
   label: string;
@@ -29,9 +29,10 @@ const METRICS: Metric[] = [
     format: (n) => n.toLocaleString(),
   },
   {
-    label: "Search time",
-    value: (run) => run.seconds,
-    format: (s) => `${s.toFixed(2)} s`,
+    label: "Compute time",
+    // Known from the start, but revealing it early would spoil the race.
+    value: (run) => (run.phase === "searching" ? null : run.computeMs),
+    format: formatMs,
   },
 ];
 

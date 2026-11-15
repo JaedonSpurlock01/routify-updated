@@ -18,14 +18,73 @@ export const algorithmInfo = (id: AlgorithmId) => ALGORITHMS.find((a) => a.id ==
 type SingleFrontierId = Exclude<AlgorithmId, "bidirectional">;
 
 /**
- * One run of a pathfinding algorithm over a `CityMap`, advanced a node at a
- * time so it can be animated.
+ * The full record of one search, in the order it happened, so it can be
+ * played back at any speed after the fact.
  *
- * Call `step` until `done`. Each step expands one node and reports the lines
- * that became fully explored. Afterwards `found` says whether the goal was
- * reached and `path` gives the route.
+ * After `k` expansions the search had explored `lines[0 .. marks[k]]`. So
+ * `marks` has `expanded + 1` entries, starting at 0 and ending at
+ * `lines.length`.
  */
-export interface PathSearch {
+export interface Trace {
+  readonly algorithm: AlgorithmId;
+  /** Every explored line, each once, in the order the search explored it. */
+  readonly lines: Int32Array;
+  /** How many of `lines` had been explored after each number of expansions. */
+  readonly marks: Int32Array;
+  readonly expanded: number;
+  readonly found: boolean;
+  /** Route lines, ordered from the goal back to the start; empty when not found. */
+  readonly route: readonly number[];
+  /** Route length in metres; 0 when not found. */
+  readonly meters: number;
+  /** Wall-clock time the search itself took. */
+  readonly computeMs: number;
+}
+
+/** Runs a search from `start` to `goal` to completion and records it. */
+export function runSearch(
+  map: CityMap,
+  algorithm: AlgorithmId,
+  start: number,
+  goal: number
+): Trace {
+  const startedAt = performance.now();
+  const search: PathSearch =
+    algorithm === "bidirectional"
+      ? new BidirectionalSearch(map, start, goal)
+      : new Search(map, algorithm, start, goal);
+
+  const lines: number[] = [];
+  const marks: number[] = [0];
+  while (!search.done) {
+    const before = search.expanded;
+    search.step(lines);
+    // A step can end the search without expanding anything.
+    if (search.expanded !== before) marks.push(lines.length);
+  }
+  const route = search.path();
+  const computeMs = performance.now() - startedAt;
+
+  return {
+    algorithm,
+    lines: Int32Array.from(lines),
+    marks: Int32Array.from(marks),
+    expanded: search.expanded,
+    found: search.found,
+    route,
+    meters: pathMeters(map, route),
+    computeMs,
+  };
+}
+
+/**
+ * One run of a pathfinding algorithm, advanced a node at a time.
+ *
+ * Call `step` until `done`. Each step expands at most one node and reports the
+ * lines that became fully explored. Afterwards `found` says whether the goal
+ * was reached and `path` gives the route.
+ */
+interface PathSearch {
   readonly done: boolean;
   readonly found: boolean;
   /** Nodes taken off the frontier and expanded so far. */
@@ -36,24 +95,12 @@ export interface PathSearch {
   path(): number[];
 }
 
-/** Starts a search with the chosen algorithm. */
-export function createSearch(
-  map: CityMap,
-  algorithm: AlgorithmId,
-  start: number,
-  goal: number
-): PathSearch {
-  return algorithm === "bidirectional"
-    ? new BidirectionalSearch(map, start, goal)
-    : new Search(map, algorithm, start, goal);
-}
-
 // Node states. Unseen is 0, the typed array default.
 const OPEN = 1;
 const CLOSED = 2;
 
 /** A*, Dijkstra, Greedy, BFS and DFS: one frontier growing from the start. */
-export class Search implements PathSearch {
+class Search implements PathSearch {
   done = false;
   found = false;
   /** Nodes taken off the frontier and expanded so far. */

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as THREE from "three";
 import { CityMapBuilder, type CityMap } from "../city/city-map";
-import { createSearch, pathMeters } from "./search";
+import { runSearch } from "./search";
 import { Visualizer } from "./visualizer";
 
 // Drive the animation loop by hand instead of waiting on real frames.
@@ -55,7 +55,7 @@ const COLORS = {
 
 function placed(map: CityMap) {
   const visualizer = new Visualizer(map, COLORS);
-  visualizer.speed = 5;
+  visualizer.speed = 300; // expansions per second: several frames per search
   const at = (node: number) => visualizer.placePoint(map.nodeX[node], map.nodeY[node]);
   at(0);
   at(map.nodeCount - 1);
@@ -81,12 +81,11 @@ describe("Visualizer comparison", () => {
 
     const { start, end } = visualizer.getState();
     for (const run of [a, b]) {
-      const reference = createSearch(map, run.algorithm, start!.node, end!.node);
-      while (!reference.done) reference.step([]);
+      const reference = runSearch(map, run.algorithm, start!.node, end!.node);
       expect(run.phase).toBe("done");
       expect(run.found).toBe(true);
       expect(run.nodesExpanded).toBe(reference.expanded);
-      expect(run.meters).toBeCloseTo(pathMeters(map, reference.path()), 6);
+      expect(run.meters).toBeCloseTo(reference.meters, 6);
       expect(run.linesExplored).toBeGreaterThan(0);
     }
     expect(comparison!.sharedLines).toBeGreaterThan(0);
@@ -149,3 +148,50 @@ describe("Visualizer comparison", () => {
     expect(visualizer.getState().result?.found).toBe(true);
   });
 });
+
+describe("Visualizer playback", () => {
+  const map = grid();
+
+  test("holds back the result until the search has played out", () => {
+    const visualizer = placed(map);
+    visualizer.start("dijkstra");
+    runFrames(1);
+    expect(visualizer.getState()).toMatchObject({ status: "searching", result: null });
+    runFrames();
+    const { status, result } = visualizer.getState();
+    expect(status).toBe("done");
+    expect(result?.found).toBe(true);
+    expect(result?.computeMs).toBeGreaterThanOrEqual(0);
+  });
+
+  test("instant speed draws the whole search and route in one frame", () => {
+    const visualizer = placed(map);
+    visualizer.speed = Infinity;
+    visualizer.start("bfs", "astar");
+    runFrames(1);
+    expect(queued).toBeNull();
+    const { status, comparison } = visualizer.getState();
+    expect(status).toBe("done");
+    for (const run of comparison!.runs) {
+      expect(run.phase).toBe("done");
+      expect(run.nodesExpanded).toBe(runSearch(map, run.algorithm, 0, map.nodeCount - 1).expanded);
+    }
+  });
+
+  test("a faster speed finishes in fewer frames", () => {
+    const frames = (speed: number) => {
+      const visualizer = placed(map);
+      visualizer.speed = speed;
+      visualizer.start("dijkstra");
+      let count = 0;
+      while (visualizer.getState().status === "searching") {
+        runFrames(1);
+        count++;
+      }
+      visualizer.stop();
+      return count;
+    };
+    expect(frames(3000)).toBeLessThan(frames(300));
+  });
+});
+
