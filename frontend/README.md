@@ -1,10 +1,11 @@
-# Frontend
+# Routify web app
 
-Built with React, TypeScript, Vite, React Query, and various npm packages.
+React, TypeScript, Vite, three.js, and a Cloudflare Pages Function. See the [root README](../README.md) for development and deployment.
 
-## Development & Installation
-
-Install dependencies with `yarn` or `npm install --legacy-peer-deps`. Then run `yarn dev` or `npm run dev` to start the development server.
+- `src/lib/city/` — downloading a city and building its road graph (`loadCity`, `CityMap`)
+- `src/lib/pathfinding/` — the search algorithms (`Search`) and the map renderer/animator (`Visualizer`)
+- `src/components/`, `src/pages/` — the UI
+- `functions/api/osm/` — the Pages Function that serves and caches city data in R2
 
 ## License
 

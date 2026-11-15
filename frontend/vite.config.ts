@@ -11,4 +11,9 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  worker: { format: "es" },
+  server: {
+    // Pages Functions run under `wrangler pages dev` (see `bun run dev`).
+    proxy: { "/api": "http://localhost:8788" },
+  },
 });

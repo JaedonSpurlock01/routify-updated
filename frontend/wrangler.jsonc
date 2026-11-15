@@ -1,0 +1,9 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "routify",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2025-09-01",
+  // City road networks fetched from Overpass are cached here.
+  // Create it once with: bunx wrangler r2 bucket create routify-cities
+  "r2_buckets": [{ "binding": "CITIES", "bucket_name": "routify-cities" }]
+}

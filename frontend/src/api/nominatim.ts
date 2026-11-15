@@ -1,35 +1,46 @@
-import { type NominatimSuggestion } from "@/types/overpass-suggestion";
-import { useQuery } from "@tanstack/react-query";
+import { type NominatimSuggestion } from "@/types/nominatim";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+
+const BASE_URL = "https://nominatim.openstreetmap.org";
+
+async function getJson<T>(url: string, signal: AbortSignal): Promise<T> {
+  const res = await fetch(url, { signal });
+  if (!res.ok) throw new Error(`Nominatim responded with ${res.status}`);
+  return res.json();
+}
 
 export function useNominatimSearch(query: string) {
-  return useQuery<NominatimSuggestion[]>({
-    queryKey: ["nominatim", query],
-    queryFn: async () => {
-      if (!query) return [];
-
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${query}`
-      );
-      return res.json();
-    },
+  const trimmed = query.trim();
+  return useQuery({
+    queryKey: ["nominatim", trimmed],
+    queryFn: ({ signal }) =>
+      getJson<NominatimSuggestion[]>(
+        `${BASE_URL}/search?format=json&q=${encodeURIComponent(trimmed)}`,
+        signal
+      ),
+    enabled: trimmed.length > 0,
+    placeholderData: keepPreviousData,
+    staleTime: 5 * 60_000,
   });
 }
 
+/** Looks up a single place, for when a city is opened straight from a link. */
 export function useNominatimLookup(
-  osm_id: number,
-  osm_type: "relation" | "node"
+  osmType: string,
+  osmId: number,
+  enabled: boolean
 ) {
-  const type = osm_type === "relation" ? "R" : "N";
-
-  return useQuery<NominatimSuggestion[]>({
-    queryKey: ["nominatim-lookup", osm_type, osm_id],
-    queryFn: async () => {
-      if (!osm_id || !osm_type) return [];
-
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/lookup?osm_ids=${type}${osm_id}&format=json`
+  return useQuery({
+    queryKey: ["nominatim-lookup", osmType, osmId],
+    queryFn: async ({ signal }) => {
+      const prefix = osmType[0].toUpperCase();
+      const results = await getJson<NominatimSuggestion[]>(
+        `${BASE_URL}/lookup?osm_ids=${prefix}${osmId}&format=json`,
+        signal
       );
-      return res.json();
+      return results[0] ?? null;
     },
+    enabled,
+    staleTime: Infinity,
   });
 }

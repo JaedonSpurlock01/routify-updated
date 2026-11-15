@@ -1,27 +1,33 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
-import { queryClient } from "./query-client";
 import { Outlet } from "react-router-dom";
-import { PlaceContextProvider } from "./lib/context/place.context";
-import { ThreeContextProvider } from "./lib/context/three.context";
-import { AlgorithmContextProvider } from "./lib/context/algorithm.context";
-import { ColorContextProvider } from "./lib/context/color.context";
+import { queryClient } from "./query-client";
+import { CityProvider, SettingsProvider } from "./lib/state";
 
 export default function Providers() {
   return (
     <QueryClientProvider client={queryClient}>
-      <PlaceContextProvider>
-        <ThreeContextProvider>
-          <AlgorithmContextProvider>
-            <ColorContextProvider>
-              <main className="dark bg-neutral-950 text-primary">
-                <Outlet />
-              </main>
-              <Toaster position="bottom-left" />
-            </ColorContextProvider>
-          </AlgorithmContextProvider>
-        </ThreeContextProvider>
-      </PlaceContextProvider>
+      <CityProvider>
+        <SettingsProvider>
+          <div className="dark bg-neutral-950 text-primary">
+            <Outlet />
+          </div>
+          <Toaster
+            theme="dark"
+            position="bottom-left"
+            toastOptions={{
+              duration: 5000,
+              style: {
+                background: "#262626",
+                color: "#fff",
+                borderRadius: "999px",
+                borderColor: "#404040",
+                paddingInline: "1.25rem",
+              },
+            }}
+          />
+        </SettingsProvider>
+      </CityProvider>
     </QueryClientProvider>
   );
 }
