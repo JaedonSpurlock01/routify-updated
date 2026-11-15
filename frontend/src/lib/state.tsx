@@ -57,6 +57,9 @@ export const DEFAULT_COLORS = {
   path: "#ff5454",
   start: "#42f587",
   end: "#fc2d49",
+  /** The two algorithms in a comparison; where both explore, `search` is used. */
+  compareA: "#3fb5ff",
+  compareB: "#ffa53d",
 };
 
 export type Colors = typeof DEFAULT_COLORS;
@@ -97,6 +100,9 @@ interface MapSessionValue {
   visualizer: Visualizer;
   algorithm: AlgorithmId;
   setAlgorithm: (algorithm: AlgorithmId) => void;
+  /** A second algorithm to race against `algorithm`, or null to run one. */
+  compareAlgorithm: AlgorithmId | null;
+  setCompareAlgorithm: (algorithm: AlgorithmId | null) => void;
 }
 
 export const MapSessionContext = createContext<MapSessionValue | null>(null);

@@ -2,14 +2,16 @@ import type { CityMap } from "../city/city-map";
 import { haversineMeters } from "../geo";
 
 export const ALGORITHMS = [
-  { id: "astar", label: "A* Search" },
-  { id: "dijkstra", label: "Dijkstra's Search" },
-  { id: "greedy", label: "Greedy Search" },
-  { id: "bfs", label: "Breadth-First Search" },
-  { id: "dfs", label: "Depth-First Search" },
+  { id: "astar", label: "A* Search", short: "A*" },
+  { id: "dijkstra", label: "Dijkstra's Search", short: "Dijkstra" },
+  { id: "greedy", label: "Greedy Search", short: "Greedy" },
+  { id: "bfs", label: "Breadth-First Search", short: "BFS" },
+  { id: "dfs", label: "Depth-First Search", short: "DFS" },
 ] as const;
 
 export type AlgorithmId = (typeof ALGORITHMS)[number]["id"];
+
+export const algorithmInfo = (id: AlgorithmId) => ALGORITHMS.find((a) => a.id === id)!;
 
 // Node states. Unseen is 0, the typed array default.
 const OPEN = 1;
@@ -26,6 +28,8 @@ const CLOSED = 2;
 export class Search {
   done = false;
   found = false;
+  /** Nodes taken off the frontier and expanded so far. */
+  expanded = 0;
 
   private readonly map: CityMap;
   private readonly goal: number;
@@ -75,6 +79,7 @@ export class Search {
       return;
     }
     state[node] = CLOSED;
+    this.expanded++;
 
     if (node === this.goal) {
       if (prevLine[node] !== -1) explored.push(prevLine[node]);

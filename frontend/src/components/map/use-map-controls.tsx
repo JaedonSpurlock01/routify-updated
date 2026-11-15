@@ -4,14 +4,14 @@ import { useMapSession, useSettings, useVisualizerState } from "@/lib/state";
 
 /** Starts a search if one can start, explains why not, or stops the current one. */
 export function useToggleSearch() {
-  const { visualizer, algorithm } = useMapSession();
+  const { visualizer, algorithm, compareAlgorithm } = useMapSession();
   return useCallback(() => {
     const { status, start, end } = visualizer.getState();
     if (status !== "idle") visualizer.stop();
     else if (!start) toast("Double click the map to choose a starting point");
     else if (!end) toast("Double click the map to choose a goal");
-    else visualizer.start(algorithm);
-  }, [visualizer, algorithm]);
+    else visualizer.start(algorithm, compareAlgorithm);
+  }, [visualizer, algorithm, compareAlgorithm]);
 }
 
 /** Keyboard shortcuts for the map page. */

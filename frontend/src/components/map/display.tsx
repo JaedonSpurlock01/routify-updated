@@ -9,6 +9,11 @@ const COLOR_OPTIONS: { key: keyof Colors; label: string }[] = [
   { key: "path", label: "Path" },
 ];
 
+const COMPARE_COLOR_OPTIONS: { key: keyof Colors; label: string }[] = [
+  { key: "compareA", label: "First" },
+  { key: "compareB", label: "Second" },
+];
+
 export const Display = () => {
   const { colors, setColor, bloom, setBloom } = useSettings();
 
@@ -19,6 +24,19 @@ export const Display = () => {
         <p className="text-neutral-300">Colors</p>
         <div className="flex gap-3 ml-auto">
           {COLOR_OPTIONS.map(({ key, label }) => (
+            <ColorItem
+              key={key}
+              label={label}
+              color={colors[key]}
+              onChange={(hex) => setColor(key, hex)}
+            />
+          ))}
+        </div>
+      </div>
+      <div className="text-base flex items-center flex-wrap mt-3">
+        <p className="text-neutral-300">Compare colors</p>
+        <div className="flex gap-3 ml-auto">
+          {COMPARE_COLOR_OPTIONS.map(({ key, label }) => (
             <ColorItem
               key={key}
               label={label}

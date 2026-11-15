@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { OrbitControls } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
 import * as THREE from "three";
 
+import { ComparisonPanel } from "@/components/map/comparison-panel";
 import { Navbar } from "@/components/map/navbar";
 import { Scene } from "@/components/map/scene";
 import {
@@ -29,10 +30,25 @@ export default function MapPage() {
 function MapView({ city }: { city: City }) {
   const { colors } = useSettings();
   const [visualizer] = useState(() => new Visualizer(city.map, colors));
-  const [algorithm, setAlgorithm] = useState<AlgorithmId>("astar");
+  const [algorithm, setPrimary] = useState<AlgorithmId>("astar");
+  const [compareAlgorithm, setCompareAlgorithm] = useState<AlgorithmId | null>(null);
+  // Picking the algorithm already being compared against swaps the two.
+  const setAlgorithm = useCallback(
+    (next: AlgorithmId) => {
+      if (next === compareAlgorithm) setCompareAlgorithm(algorithm);
+      setPrimary(next);
+    },
+    [algorithm, compareAlgorithm]
+  );
   const session = useMemo(
-    () => ({ visualizer, algorithm, setAlgorithm }),
-    [visualizer, algorithm]
+    () => ({
+      visualizer,
+      algorithm,
+      setAlgorithm,
+      compareAlgorithm,
+      setCompareAlgorithm,
+    }),
+    [visualizer, algorithm, setAlgorithm, compareAlgorithm]
   );
 
   useEffect(() => () => visualizer.dispose(), [visualizer]);
@@ -75,6 +91,7 @@ function MapView({ city }: { city: City }) {
 
         <Navbar />
         <MapEffects />
+        <ComparisonPanel />
 
         <div className="absolute bottom-6 right-6 max-w-[70vw] text-neutral-100 text-right pointer-events-none [&_a]:pointer-events-auto">
           <h1 className="text-xl text-balance">{city.place.displayName}</h1>
