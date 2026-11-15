@@ -25,10 +25,10 @@ export default function HomePage() {
     <LightRays>
       <main className="min-h-dvh flex flex-col items-center justify-center py-20 md:pt-0">
         <img
-          src="/logo-dark.png"
+          src="/logo-dark.svg"
           alt="Routify"
-          width={600}
-          height={177}
+          width={796}
+          height={256}
           className="w-48 h-auto"
         />
         <p className="md:text-lg xl:text-xl text-muted-foreground font-light mt-2 mb-10">

@@ -1,0 +1,38 @@
+{
+  "brand": "Routify",
+  "tagline": "The ultimate city pathfinding visualizer",
+  "brief": "An open-source web app that loads any city from OpenStreetMap and animates pathfinding algorithms across its real streets. The identity should feel exploratory, precise and luminous, and should fit the app's dark map interface.",
+  "adjectives": ["exploratory", "precise", "luminous", "playful-technical"],
+  "criteria": "Success: keeps the recognisable map-tile idea from the old logo, reads at 16 px, works in one colour, and sits naturally on the app's near-black UI.",
+  "industry": "software",
+  "nav": ["Explore a city", "Algorithms", "GitHub"],
+  "brand_color": "#FF5454",
+  "tile_color": "#0D0D0D",
+  "greyscale": false,
+  "final": true,
+  "designer": "Routify",
+  "concepts": [
+    {
+      "name": "City Blocks",
+      "symbol": "../logo/routify-symbol.svg",
+      "lockup": "../logo/routify-horizontal.svg",
+      "stacked": "../logo/routify-stacked.svg",
+      "avatar": "../logo/routify-symbol-small.svg",
+      "symbol_on_tile": "../logo/routify-symbol-reversed.svg",
+      "symbol_on_dark": "../logo/routify-symbol-reversed.svg",
+      "lockup_on_dark": "../logo/routify-horizontal-reversed.svg",
+      "lockup_on_tile": "../logo/routify-horizontal-reversed.svg",
+      "stacked_on_dark": "../logo/routify-stacked-reversed.svg",
+      "stacked_on_tile": "../logo/routify-stacked-reversed.svg",
+      "idea": "Three city blocks; the streets between them are the route, and the red node is where it ends.",
+      "rationale": [
+        "Evolves the old outlined map tile into solid blocks, so it survives at favicon size",
+        "Negative-space streets echo the glowing road network the app draws",
+        "The red destination node uses the app's own path colour (#FF5454)",
+        "Monoline wordmark is built from the same round-capped road lines as the map"
+      ]
+    }
+  ],
+  "recommendation": "City Blocks: refined geometry, wider streets for small sizes, and a colour system taken straight from the app.",
+  "next_steps": ["Swap the new files into the web app", "Use the stacked lockup for social cards", "Run a trademark search before any wider launch"]
+}
