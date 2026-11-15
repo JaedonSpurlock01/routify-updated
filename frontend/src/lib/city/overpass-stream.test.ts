@@ -68,6 +68,15 @@ describe("OverpassStreamParser", () => {
     expect(() => parse(doc, 9)).toThrow(/timed out/);
   });
 
+  test("skips the heartbeat whitespace sent while Overpass works", () => {
+    expect(parse(" ".repeat(40) + DOCUMENT, 3)).toEqual(expected);
+  });
+
+  test("surfaces an error the API sent after its heartbeats", () => {
+    const doc = `     {"error":"The map server is busy right now."}`;
+    expect(() => parse(doc, 4)).toThrow("The map server is busy right now.");
+  });
+
   test("rejects a response that is not Overpass JSON", () => {
     expect(() => parse("<html>rate limited</html>", 8)).toThrow(/unexpected/);
   });

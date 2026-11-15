@@ -173,6 +173,19 @@
     animation: indeterminate 1.1s linear infinite;
   }
 
+  /* A blip on each server heartbeat while a city is loading. */
+  @keyframes heartbeat {
+    from {
+      transform: scale(1.8);
+      opacity: 1;
+    }
+  }
+
+  .animate-heartbeat {
+    opacity: 0.6;
+    animation: heartbeat 600ms var(--ease-out);
+  }
+
   /* Light rays behind the home page. Compositor-only: opacity + transform. */
   @keyframes ray-pulse {
     0%,
@@ -226,6 +239,10 @@
   .light-ray {
     animation: none;
     opacity: 0.5;
+  }
+
+  .animate-heartbeat {
+    animation: none;
   }
 
   @keyframes fade-only {

@@ -1,12 +1,7 @@
 import type { CityMap } from "./city-map";
-import type { LoadMessage, LoadRequest } from "./city.worker";
+import type { LoadMessage, LoadProgress, LoadRequest } from "./city.worker";
 
-export interface LoadProgress {
-  /** Decoded bytes received so far. */
-  bytes: number;
-  /** Total size when the server knows it (a cached city), otherwise null. */
-  totalBytes: number | null;
-}
+export type { LoadProgress };
 
 export type OsmType = "relation" | "way";
 
@@ -34,7 +29,7 @@ export function loadCity(
 
     worker.onmessage = ({ data }: MessageEvent<LoadMessage>) => {
       if (data.kind === "progress") {
-        options.onProgress(data);
+        options.onProgress(data.progress);
         return;
       }
       worker.terminate();

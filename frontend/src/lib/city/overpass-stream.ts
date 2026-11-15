@@ -42,15 +42,17 @@ export class OverpassStreamParser {
       return;
     }
 
-    this.buf += text;
-
     if (this.phase === Phase.Head) {
+      // The API pads the wait for Overpass with whitespace heartbeats.
+      this.buf = (this.buf + text).trimStart();
       const key = this.buf.indexOf('"elements"');
       const open = key === -1 ? -1 : this.buf.indexOf("[", key);
       if (open === -1) return; // keep buffering the (tiny) header
       this.buf = this.buf.slice(open + 1);
       this.scanFrom = 0;
       this.phase = Phase.Elements;
+    } else {
+      this.buf += text;
     }
 
     this.scanElements();
@@ -59,7 +61,9 @@ export class OverpassStreamParser {
   finish(): void {
     if (this.phase === Phase.Head) {
       throw new Error(
-        remarkIn(this.buf) ?? "The map server returned an unexpected response."
+        apiErrorIn(this.buf) ??
+          remarkIn(this.buf) ??
+          "The map server returned an unexpected response."
       );
     }
     if (this.phase === Phase.Elements) {
@@ -111,6 +115,16 @@ export class OverpassStreamParser {
     this.depth = depth;
     this.inString = inString;
     this.escaped = escaped;
+  }
+}
+
+/** The `{"error": "..."}` our API sends when it fails after the response began. */
+function apiErrorIn(text: string): string | null {
+  try {
+    const { error } = JSON.parse(text) as { error?: unknown };
+    return typeof error === "string" ? error : null;
+  } catch {
+    return null;
   }
 }
 

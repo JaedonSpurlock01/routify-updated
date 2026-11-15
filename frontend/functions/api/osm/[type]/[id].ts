@@ -33,6 +33,10 @@ const ROAD_FILTER =
 /** R2 multipart uploads need every part except the last to be the same size. */
 const PART_SIZE = 8 * 1024 * 1024;
 
+/** Sent while Overpass is still working, so the visitor knows we're alive. */
+const HEARTBEAT = new TextEncoder().encode(" ");
+const HEARTBEAT_INTERVAL_MS = 2000;
+
 /** Anything smaller is an empty or error document, not a city worth caching. */
 const MIN_CACHEABLE_BYTES = 1024;
 
@@ -68,39 +72,83 @@ export const onRequestGet: PagesFunction<Env, "type" | "id"> = async ({
     env.OVERPASS_URLS?.split(",").map((url) => url.trim()).filter(Boolean) ??
     DEFAULT_OVERPASS_URLS;
 
-  let upstream: Response | null = null;
-  for (const endpoint of endpoints) {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "User-Agent": "Routify (city pathfinding visualizer)" },
-      body: new URLSearchParams({ data: query }),
-    }).catch(() => null);
-    if (response && !BUSY_STATUSES.has(response.status)) {
-      upstream = response;
-      break;
-    }
-    await response?.body?.cancel();
-  }
-
-  if (!upstream) {
-    return error(503, "The map server is busy right now. Please try again in a minute.");
-  }
-  const isJson = upstream.headers.get("Content-Type")?.includes("json");
-  if (!upstream.ok || !upstream.body || !isJson) {
-    return error(502, `The map server returned an error (${upstream.status}).`);
-  }
-
+  // Overpass sends nothing until it has run the whole query, which takes
+  // minutes for a big city. So the response starts right away and stays alive
+  // with whitespace heartbeats (legal before a JSON document) until the data
+  // flows; that is how the visitor can tell the server is still working.
+  // Once the status line is out, failures are reported as `{"error": "..."}`.
   const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
-  waitUntil(relayAndCache(upstream.body, writable, env.CITIES, key));
+  const client = writable.getWriter();
+  waitUntil(
+    queryOverpass(endpoints, query, client).then(
+      (body) => body && relayAndCache(body, client, env.CITIES, key)
+    )
+  );
 
   return new Response(readable, {
     headers: {
       "Content-Type": "application/json",
-      "Cache-Control": "no-store",
+      // Left uncompressed: a compressor would sit on the heartbeats until it
+      // had a full block to send. Only this first, uncached download pays.
+      "Cache-Control": "no-store, no-transform",
+      "Content-Encoding": "identity",
       "X-Cache": "MISS",
     },
   });
 };
+
+/**
+ * Runs the query against each endpoint in turn, heartbeating to `client` while
+ * it waits. Resolves with the Overpass body, or null after writing the error.
+ */
+async function queryOverpass(
+  endpoints: string[],
+  query: string,
+  client: WritableStreamDefaultWriter<Uint8Array>
+): Promise<ReadableStream<Uint8Array> | null> {
+  // Writes queue in order, so a beat still pending when the data starts is harmless.
+  const beat = () => client.write(HEARTBEAT).catch(() => {});
+  beat();
+  const timer = setInterval(beat, HEARTBEAT_INTERVAL_MS);
+
+  try {
+    let upstream: Response | null = null;
+    for (const endpoint of endpoints) {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "User-Agent": "Routify (city pathfinding visualizer)" },
+        body: new URLSearchParams({ data: query }),
+      }).catch(() => null);
+      if (response && !BUSY_STATUSES.has(response.status)) {
+        upstream = response;
+        break;
+      }
+      await response?.body?.cancel();
+    }
+
+    if (!upstream) {
+      return fail(client, "The map server is busy right now. Please try again in a minute.");
+    }
+    const isJson = upstream.headers.get("Content-Type")?.includes("json");
+    if (!upstream.ok || !upstream.body || !isJson) {
+      await upstream.body?.cancel();
+      return fail(client, `The map server returned an error (${upstream.status}).`);
+    }
+    return upstream.body;
+  } finally {
+    clearInterval(timer);
+  }
+}
+
+async function fail(
+  client: WritableStreamDefaultWriter<Uint8Array>,
+  message: string
+): Promise<null> {
+  const body = new TextEncoder().encode(JSON.stringify({ error: message }));
+  await client.write(body).catch(() => {});
+  await client.close().catch(() => {});
+  return null;
+}
 
 /**
  * Copies `source` to the visitor and to R2. A visitor who disconnects does not
@@ -108,12 +156,11 @@ export const onRequestGet: PagesFunction<Env, "type" | "id"> = async ({
  */
 async function relayAndCache(
   source: ReadableStream<Uint8Array>,
-  client: WritableStream<Uint8Array>,
+  writer: WritableStreamDefaultWriter<Uint8Array>,
   bucket: R2Bucket,
   key: string
 ): Promise<void> {
   const reader = source.getReader();
-  const writer = client.getWriter();
   let clientConnected = true;
 
   const upload = await bucket.createMultipartUpload(key, {
