@@ -15,6 +15,20 @@ export function useToggleSearch() {
   }, [visualizer, algorithm, compareAlgorithm]);
 }
 
+/** Pauses or resumes playback; once it has finished, plays it again from the start. */
+export function useTogglePlayback() {
+  const { visualizer } = useMapSession();
+  return useCallback(() => {
+    const { status, paused } = visualizer.getState();
+    if (status === "idle") return;
+    if (status === "done") {
+      visualizer.seek(0);
+      visualizer.resume();
+    } else if (paused) visualizer.resume();
+    else visualizer.pause();
+  }, [visualizer]);
+}
+
 /** Keyboard shortcuts for the map page. */
 export function useMapShortcuts() {
   const { visualizer } = useMapSession();
@@ -24,15 +38,24 @@ export function useMapShortcuts() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey || event.repeat) return;
+      // Already handled, e.g. Escape closing a menu or the settings sheet.
+      if (event.defaultPrevented) return;
       const target = event.target as HTMLElement | null;
       if (target?.closest("input, textarea, select, [contenteditable]")) return;
+      const { status, paused } = visualizer.getState();
 
       switch (event.key.toLowerCase()) {
         case " ":
           // Let Space keep activating whichever button has focus.
           if (target?.closest("button, a, [role='menuitem'], [role='slider'], [role='switch']")) return;
           event.preventDefault();
-          toggleSearch();
+          // Start, then pause and resume; a finished search is erased as before.
+          if (status === "idle" || status === "done") toggleSearch();
+          else if (paused) visualizer.resume();
+          else visualizer.pause();
+          break;
+        case "escape":
+          if (status !== "idle") visualizer.stop();
           break;
         case "b":
           setBloom((on) => !on);
@@ -52,15 +75,14 @@ export function useMapShortcuts() {
   }, [visualizer, setBloom, toggleSearch]);
 }
 
-/** Announces how a search ended. */
+/** Announces how a search ended, once per search however often it is scrubbed past its end. */
 export function useSearchResultToast() {
   const { result } = useVisualizerState();
   const announced = useRef(result);
 
   useEffect(() => {
-    if (result === announced.current) return;
+    if (!result || result === announced.current) return;
     announced.current = result;
-    if (!result) return;
 
     if (!result.found) {
       toast.error("No path found");

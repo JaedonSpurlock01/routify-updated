@@ -33,21 +33,6 @@ export interface RunStats {
   computeMs: number;
 }
 
-/** One trace being played back, and how much of it is on screen. */
-interface Run {
-  trace: Trace;
-  /** Explored lines painted so far. */
-  shown: number;
-  /** Route lines painted so far, and how long the route has been drawing. */
-  routeShown: number;
-  routeMs: number;
-  /** The route, drawn as one smooth ribbon; null when there is none. */
-  ribbon: RouteRibbon | null;
-  /** Where each route line sits in `trace.route`. */
-  routeIndex: Map<number, number>;
-  stats: RunStats;
-}
-
 export interface Comparison {
   /** Changes with every run, so the UI can tell runs apart. */
   id: number;
@@ -60,10 +45,20 @@ export interface Comparison {
 
 export interface VisualizerState {
   status: VisualizerStatus;
+  /** Playback is held part-way; nothing advances until it resumes. */
+  paused: boolean;
   start: MapPoint | null;
   end: MapPoint | null;
   result: SearchResult | null;
   comparison: Comparison | null;
+}
+
+/** Where playback has got to, for the timeline. Changes every frame while playing. */
+export interface PlaybackProgress {
+  /** Expansions drawn so far. */
+  cursor: number;
+  /** Where the cursor ends: the longest trace's expansions. */
+  length: number;
 }
 
 export interface LineColors {
@@ -81,10 +76,64 @@ type Palette = Record<keyof LineColors, THREE.Color> & {
   pathBoth: THREE.Color;
 };
 
-// Per-line ownership bits during a comparison.
-const EXPLORED = [1, 2] as const;
-const ROUTE = [4, 8] as const;
-const EXPLORED_BOTH = 3;
+/** One trace being played back, and how much of its route is on screen. */
+interface Run {
+  trace: Trace;
+  /** Route lines drawn so far, and how long the route has been drawing. */
+  routeShown: number;
+  routeMs: number;
+  /** The route, drawn as one smooth ribbon; null when there is none. */
+  ribbon: RouteRibbon | null;
+  stats: RunStats;
+}
+
+/**
+ * Every line playback draws in the explored overlay, in the order it first
+ * appears. Overlay slot `s` always holds `lines[s]`, whatever the cursor, so
+ * moving the cursor back only shortens the overlay and moving it forward
+ * again reuses what is already on the GPU.
+ */
+interface Reveal {
+  lines: Int32Array;
+  /** Overlay slots in use after `k` expansions, for k = 0 … length. */
+  slotsAt: Int32Array;
+  /** Comparisons only: which run explored each slot's line first. */
+  side: Uint8Array | null;
+  /** Comparisons only: the expansion at which the other run also explored it, or NEVER. */
+  bothAt: Int32Array | null;
+  /** Comparisons only: slots both runs explored, in the order the second run got there. */
+  shared: Int32Array | null;
+  /** Comparisons only: how many of `shared` both runs had explored after `k` expansions. */
+  sharedAt: Int32Array | null;
+}
+
+/** Everything about the traces on screen. */
+interface Playback {
+  id: number;
+  runs: Run[];
+  reveal: Reveal;
+  /** The longest trace's expansions: where the cursor ends. */
+  length: number;
+  /** Expansions played so far; fractional between frames. */
+  cursor: number;
+  /** Whole expansions currently drawn. */
+  drawn: number;
+  /** Colours as they were when the search started. */
+  colors: Palette;
+  comparing: boolean;
+  /** Route-line index pairs (first run, second run) for lines both routes use. */
+  routePairs: Int32Array;
+  /** Whether each pair is currently drawn by both routes. */
+  pairShown: Uint8Array;
+  sharedPathLines: number;
+  /** A single run's result, revealed once its search has played out. */
+  result: SearchResult;
+  /** Time of the last frame, or null when the next frame is the first since (re)starting. */
+  last: number | null;
+  lastPublish: number;
+}
+
+const NEVER = 0x7fffffff;
 
 /** How often live comparison stats reach React while searches run. */
 const PUBLISH_INTERVAL_MS = 100;
@@ -116,8 +165,10 @@ const MAX_RECOLOUR_RANGES = 32;
  *
  * Owns the instanced mesh for the road network (add `mesh` to a scene), the
  * start/end points, and playback. A search runs to completion the moment it
- * starts; what animates is its trace. React only needs to forward input
- * (`placePoint`, `start`, `stop`, …) and render `getState()`, via `subscribe`.
+ * starts; what animates is its trace, so playback can pause, skip to the end
+ * or jump to any cursor without searching again. React only needs to forward
+ * input (`placePoint`, `start`, `pause`, `seek`, …) and render `getState()`,
+ * via `subscribe`, and `getProgress()`, via `subscribeProgress`.
  */
 export class Visualizer {
   /** Everything the visualizer draws: add this to a scene. */
@@ -131,20 +182,21 @@ export class Visualizer {
 
   private readonly map: CityMap;
   private colors: Palette;
-  /** Which comparison run explored or routed through each line; null outside comparisons. */
-  private owner: Uint8Array | null = null;
-  /** Each line's slot in the explored overlay during a comparison, or -1; null otherwise. */
-  private slotOf: Int32Array | null = null;
   private runId = 0;
+  private playback: Playback | null = null;
+  /** Whether a frame is scheduled. */
+  private playing = false;
 
   /**
-   * Explored lines, drawn over the road network. Lines are appended in the
-   * order they are explored, so each frame uploads one contiguous run of new
-   * instances instead of scattered writes into the (much larger) road
-   * network buffers. Allocated by the first search that needs it, and only
-   * reallocated when a search explores more lines than it holds.
+   * Explored lines, drawn over the road network in reveal order, so each
+   * frame uploads one contiguous run of new instances instead of scattered
+   * writes into the (much larger) road network buffers. Allocated by the
+   * first search that needs it, and only reallocated when a search explores
+   * more lines than it holds.
    */
   private explored: THREE.InstancedMesh | null = null;
+  /** Overlay slots written on the CPU; may run past `count` after moving the cursor back. */
+  private written = 0;
   /** First overlay slot not yet sent to the GPU. */
   private uploadedTo = 0;
   /** Already-uploaded overlay slots recoloured since the last upload. */
@@ -152,12 +204,15 @@ export class Visualizer {
 
   private state: VisualizerState = {
     status: "idle",
+    paused: false,
     start: null,
     end: null,
     result: null,
     comparison: null,
   };
   private readonly listeners = new Set<() => void>();
+  private progress: PlaybackProgress | null = null;
+  private readonly progressListeners = new Set<() => void>();
 
   private ribbons: RouteRibbon[] = [];
   private readonly ribbonMaterial = new THREE.MeshBasicMaterial({
@@ -185,6 +240,14 @@ export class Visualizer {
   };
 
   getState = (): VisualizerState => this.state;
+
+  subscribeProgress = (listener: () => void): (() => void) => {
+    this.progressListeners.add(listener);
+    return () => this.progressListeners.delete(listener);
+  };
+
+  /** Where playback is, or null when no search is on screen. */
+  getProgress = (): PlaybackProgress | null => this.progress;
 
   // ── Input ────────────────────────────────────────────────────────────────
 
@@ -230,19 +293,84 @@ export class Visualizer {
 
   /** Cancels any search and erases what it drew. The points stay. */
   stop(): void {
-    cancelAnimationFrame(this.frame);
+    this.halt();
+    this.playback = null;
     if (this.explored) this.explored.count = 0;
+    this.written = 0;
     this.uploadedTo = 0;
     this.recoloured = [];
     for (const ribbon of this.ribbons) ribbon.dispose();
     this.ribbons = [];
-    this.owner = null;
-    this.slotOf = null;
     this.onInvalidate?.();
-    const { status, result, comparison } = this.state;
-    if (status !== "idle" || result || comparison) {
-      this.setState({ status: "idle", result: null, comparison: null });
+    this.setProgress(null);
+    const { status, paused, result, comparison } = this.state;
+    if (status !== "idle" || paused || result || comparison) {
+      this.setState({ status: "idle", paused: false, result: null, comparison: null });
     }
+  }
+
+  /** Holds playback where it is. Returns false when there is nothing playing to pause. */
+  pause(): boolean {
+    const p = this.playback;
+    if (!p || this.state.paused || isFinished(p)) return false;
+    this.halt();
+    this.setState({ paused: true });
+    return true;
+  }
+
+  /** Carries on from where playback was paused. Returns false when it wasn't paused. */
+  resume(): boolean {
+    const p = this.playback;
+    if (!p || !this.state.paused) return false;
+    this.setState({ paused: false });
+    this.run(p);
+    return true;
+  }
+
+  /**
+   * Jumps to the end of the search. Routes still draw in over about a second;
+   * skipping again while they draw finishes them too. Unpauses.
+   */
+  skipToEnd(): void {
+    const p = this.playback;
+    if (!p || isFinished(p)) return;
+    if (p.drawn < p.length) {
+      p.cursor = p.length;
+      this.draw(p, p.length, false);
+    } else {
+      for (const run of p.runs) if (run.stats.phase === "tracing") this.finishRoute(p, run);
+    }
+    this.flush();
+    this.publish(p, true);
+    if (isFinished(p)) {
+      this.halt();
+      if (this.state.paused) this.setState({ paused: false });
+    } else if (!this.playing) {
+      this.setState({ paused: false });
+      this.run(p);
+    }
+  }
+
+  /**
+   * Moves the cursor to `position` expansions, forwards or backwards, and
+   * draws the search as it was there. Routes of searches that have finished
+   * by then appear whole. Playing carries on from the new position; a search
+   * that had finished and is moved back stays paused there.
+   */
+  seek(position: number): void {
+    const p = this.playback;
+    if (!p) return;
+    const k = Math.min(p.length, Math.max(0, Math.round(position)));
+    p.cursor = k;
+    this.draw(p, k, true);
+    this.flush();
+    if (isFinished(p)) {
+      this.halt();
+      if (this.state.paused) this.setState({ paused: false });
+    } else if (!this.playing && !this.state.paused) {
+      this.setState({ paused: true });
+    }
+    this.publish(p, true);
   }
 
   /** Recolours the map. Search and path colours apply from the next search. */
@@ -254,7 +382,7 @@ export class Visualizer {
   }
 
   dispose(): void {
-    cancelAnimationFrame(this.frame);
+    this.halt();
     for (const ribbon of this.ribbons) ribbon.dispose();
     this.explored?.dispose();
     this.mesh.dispose();
@@ -273,165 +401,215 @@ export class Visualizer {
    */
   private play(traces: Trace[]): void {
     const comparing = traces.length === 2;
-    const owner = comparing ? (this.owner = new Uint8Array(this.map.lineCount)) : null;
-    if (comparing) this.slotOf = new Int32Array(this.map.lineCount).fill(-1);
-    // Each trace explores a line at most once and compared runs share a line's slot.
-    const explored = traces.reduce((sum, trace) => sum + trace.lines.length, 0);
-    this.reserveExplored(Math.min(explored, this.map.lineCount));
+    const reveal = buildReveal(traces, this.map.lineCount);
+    this.reserveExplored(reveal.lines.length);
     const goal = this.state.end!.node;
-    const runs: Run[] = traces.map((trace, side) => ({
-      trace,
-      shown: 0,
-      routeShown: 0,
-      routeMs: 0,
-      ribbon: this.addRibbon(trace, goal, side, comparing),
-      routeIndex: new Map(trace.route.map((line, i) => [line, i])),
-      stats: {
-        algorithm: trace.algorithm,
-        phase: "searching",
-        found: false,
-        meters: 0,
-        nodesExpanded: 0,
-        linesExplored: 0,
-        computeMs: trace.computeMs,
-      },
-    }));
-    // A single run's result, revealed once its search has played out.
-    const result: SearchResult = {
-      found: traces[0].found,
-      meters: traces[0].meters,
-      computeMs: traces[0].computeMs,
-    };
-    const id = ++this.runId;
-    let sharedLines = 0;
-    let sharedPathLines = 0;
-    let cursor = 0;
-    let last: number | null = null;
-    let lastPublish = -Infinity;
-
-    const publish = () => {
-      const phases = runs.map((run) => run.stats.phase);
-      const status: VisualizerStatus = phases.includes("searching")
-        ? "searching"
-        : phases.includes("tracing")
-          ? "tracing"
-          : "done";
-      if (!comparing) {
-        this.setState({ status, result: status === "searching" ? null : result });
-        return;
-      }
-      this.setState({
-        status,
-        comparison: {
-          id,
-          runs: [{ ...runs[0].stats }, { ...runs[1].stats }],
-          sharedLines,
-          sharedPathLines,
+    const routePairs = comparing ? sharedRouteLines(traces[0].route, traces[1].route) : new Int32Array(0);
+    const p: Playback = {
+      id: ++this.runId,
+      runs: traces.map((trace, side) => ({
+        trace,
+        routeShown: 0,
+        routeMs: 0,
+        ribbon: this.addRibbon(trace, goal, side, comparing),
+        stats: {
+          algorithm: trace.algorithm,
+          phase: "searching",
+          found: false,
+          meters: 0,
+          nodesExpanded: 0,
+          linesExplored: 0,
+          computeMs: trace.computeMs,
         },
-      });
+      })),
+      reveal,
+      length: Math.max(...traces.map((trace) => trace.expanded)),
+      cursor: 0,
+      drawn: 0,
+      colors: this.colors,
+      comparing,
+      routePairs,
+      pairShown: new Uint8Array(routePairs.length / 2),
+      sharedPathLines: 0,
+      result: { found: traces[0].found, meters: traces[0].meters, computeMs: traces[0].computeMs },
+      last: null,
+      lastPublish: -Infinity,
     };
-
-    const explore = (line: number, side: number, stats: RunStats) => {
-      if (!owner) {
-        this.appendExplored(line, this.colors.search);
-        stats.linesExplored++;
-        return;
-      }
-      const bits = owner[line];
-      if (bits & EXPLORED[side]) return;
-      owner[line] = bits | EXPLORED[side];
-      stats.linesExplored++;
-      if (bits & EXPLORED[1 - side]) sharedLines++;
-      this.paintOwned(line);
-    };
-
-    /** Counts a route line drawn; where both compared routes use it, paints it in both. */
-    const route = (line: number, side: number) => {
-      if (!owner) return;
-      const bits = owner[line];
-      owner[line] = bits | ROUTE[side];
-      if (!(bits & ROUTE[1 - side])) return;
-      sharedPathLines++;
-      for (const run of runs) run.ribbon?.colorLine(run.routeIndex.get(line)!, this.colors.pathBoth);
-    };
-
-    const frame = (now: number) => {
-      // Cap the step so a stalled or backgrounded tab doesn't leap ahead.
-      const elapsed = last === null ? FRAME_MS : Math.min(now - last, MAX_FRAME_MS);
-      last = now;
-      const instant = !Number.isFinite(this.speed);
-      cursor = instant ? Infinity : cursor + (this.speed * elapsed) / 1000;
-      let drew = false;
-      let phaseChanged = false;
-
-      runs.forEach((run, side) => {
-        const { trace, stats } = run;
-
-        if (stats.phase === "searching") {
-          const reached = Math.min(Math.floor(cursor), trace.expanded);
-          const until = trace.marks[reached];
-          for (let i = run.shown; i < until; i++) explore(trace.lines[i], side, stats);
-          drew ||= until > run.shown;
-          run.shown = until;
-          stats.nodesExpanded = reached;
-          if (reached < trace.expanded) return;
-
-          stats.found = trace.found;
-          stats.meters = trace.meters;
-          stats.phase = trace.route.length > 0 ? "tracing" : "done";
-          phaseChanged = true;
-          if (!instant) return; // the route starts drawing next frame
-        }
-
-        if (stats.phase === "tracing") {
-          // Draw the route back from the goal, in about a second however long it is.
-          const lines = trace.route;
-          run.routeMs += elapsed;
-          const until = instant
-            ? lines.length
-            : Math.min(lines.length, Math.ceil((lines.length * run.routeMs) / ROUTE_MS));
-          for (let i = run.routeShown; i < until; i++) route(lines[i], side);
-          run.ribbon?.show(until);
-          drew ||= until > run.routeShown;
-          run.routeShown = until;
-          if (until === lines.length) {
-            stats.phase = "done";
-            phaseChanged = true;
-          }
-        }
-      });
-
-      if (drew) this.flush();
-      const finished = runs.every((run) => run.stats.phase === "done");
-      if (phaseChanged || (comparing && now - lastPublish >= PUBLISH_INTERVAL_MS)) {
-        lastPublish = now;
-        publish();
-      }
-      if (!finished) this.frame = requestAnimationFrame(frame);
-    };
-
-    this.setState({ result: null, comparison: null });
-    publish();
-    this.frame = requestAnimationFrame(frame);
+    this.playback = p;
+    this.setState({ paused: false, result: null, comparison: null });
+    this.setProgress({ cursor: 0, length: p.length });
+    this.publish(p, true);
+    this.run(p);
   }
 
-  /** Paints a line by which comparison runs explored it, recolouring it if already drawn. */
-  private paintOwned(line: number): void {
-    const bits = this.owner![line];
-    const c = this.colors;
-    const color =
-      (bits & EXPLORED_BOTH) === EXPLORED_BOTH ? c.search : bits & EXPLORED[0] ? c.compareA : c.compareB;
-    const slot = this.slotOf![line];
-    if (slot === -1) {
-      this.slotOf![line] = this.appendExplored(line, color);
+  private run(p: Playback): void {
+    p.last = null;
+    this.playing = true;
+    this.frame = requestAnimationFrame(this.tick);
+  }
+
+  private halt(): void {
+    cancelAnimationFrame(this.frame);
+    this.playing = false;
+  }
+
+  private tick = (now: number): void => {
+    const p = this.playback;
+    if (!p) return;
+    // Cap the step so a stalled or backgrounded tab doesn't leap ahead.
+    const elapsed = p.last === null ? FRAME_MS : Math.min(now - p.last, MAX_FRAME_MS);
+    p.last = now;
+    const instant = !Number.isFinite(this.speed);
+    if (p.cursor < p.length) {
+      p.cursor = instant ? p.length : Math.min(p.length, p.cursor + (this.speed * elapsed) / 1000);
+    }
+    let changed = this.draw(p, Math.floor(p.cursor), false);
+
+    for (const run of p.runs) {
+      if (run.stats.phase !== "tracing") continue;
+      // Draw the route back from the goal, in about a second however long it is.
+      const lines = run.trace.route.length;
+      run.routeMs += elapsed;
+      const until = instant ? lines : Math.min(lines, Math.ceil((lines * run.routeMs) / ROUTE_MS));
+      if (until !== run.routeShown) this.showRoute(p, run, until);
+      if (until === lines) {
+        run.stats.phase = "done";
+        changed = true;
+      }
+    }
+
+    this.flush();
+    this.publish(p, changed, now);
+    if (isFinished(p)) this.playing = false;
+    else this.frame = requestAnimationFrame(this.tick);
+  };
+
+  /**
+   * Draws the traces as they were after `k` expansions and brings each run's
+   * phase in line with it. A run moved back before its end loses its route;
+   * with `settle`, a run at or past its end shows its whole route at once.
+   * Returns whether any run changed phase.
+   */
+  private draw(p: Playback, k: number, settle: boolean): boolean {
+    this.paintExplored(p, k);
+    let changed = false;
+    for (const run of p.runs) {
+      const { trace, stats } = run;
+      const reached = Math.min(k, trace.expanded);
+      stats.nodesExpanded = reached;
+      stats.linesExplored = trace.marks[reached];
+      if (reached < trace.expanded) {
+        if (stats.phase === "searching") continue;
+        stats.phase = "searching";
+        stats.found = false;
+        stats.meters = 0;
+        run.routeMs = 0;
+        this.showRoute(p, run, 0);
+        changed = true;
+        continue;
+      }
+      if (stats.phase === "searching") {
+        stats.found = trace.found;
+        stats.meters = trace.meters;
+        stats.phase = trace.route.length > 0 ? "tracing" : "done";
+        run.routeMs = 0;
+        changed = true;
+      }
+      if (settle && stats.phase === "tracing") {
+        this.finishRoute(p, run);
+        changed = true;
+      }
+    }
+    if (this.progress?.cursor !== k) this.setProgress({ cursor: k, length: p.length });
+    return changed;
+  }
+
+  /** Shows the explored overlay as it was after `k` expansions. */
+  private paintExplored(p: Playback, k: number): void {
+    const from = p.drawn;
+    if (k === from) return;
+    const { reveal } = p;
+    const mesh = this.explored!;
+    const count = reveal.slotsAt[k];
+    const written = this.written;
+    for (let slot = written; slot < count; slot++) {
+      this.writeLine(mesh, slot, reveal.lines[slot], "search", slotColor(p, slot, k));
+    }
+    this.written = Math.max(written, count);
+
+    // Lines the other compared run reached between the two cursors change colour.
+    if (reveal.shared) {
+      const lo = reveal.sharedAt![Math.min(from, k)];
+      const hi = reveal.sharedAt![Math.max(from, k)];
+      const colors = mesh.instanceColor!.array;
+      for (let i = lo; i < hi; i++) {
+        const slot = reveal.shared[i];
+        if (slot >= written) continue; // just written in its current colour
+        slotColor(p, slot, k).toArray(colors, slot * 3);
+        if (slot < this.uploadedTo) this.recoloured.push(slot);
+      }
+    }
+
+    mesh.count = count;
+    p.drawn = k;
+  }
+
+  /** Shows a run's first `lines` route lines, marking those both compared routes show. */
+  private showRoute(p: Playback, run: Run, lines: number): void {
+    run.routeShown = lines;
+    run.ribbon?.show(lines);
+    if (!p.comparing) return;
+    const [a, b] = p.runs;
+    const { routePairs: pairs, pairShown, colors } = p;
+    for (let j = 0; j < pairShown.length; j++) {
+      const shown = pairs[j * 2] < a.routeShown && pairs[j * 2 + 1] < b.routeShown ? 1 : 0;
+      if (shown === pairShown[j]) continue;
+      pairShown[j] = shown;
+      p.sharedPathLines += shown ? 1 : -1;
+      a.ribbon!.colorLine(pairs[j * 2], shown ? colors.pathBoth : colors.pathA);
+      b.ribbon!.colorLine(pairs[j * 2 + 1], shown ? colors.pathBoth : colors.pathB);
+    }
+  }
+
+  private finishRoute(p: Playback, run: Run): void {
+    this.showRoute(p, run, run.trace.route.length);
+    run.stats.phase = "done";
+  }
+
+  /**
+   * Sends the state to React when a phase changed (or `force`), and live
+   * comparison stats at most every PUBLISH_INTERVAL_MS.
+   */
+  private publish(p: Playback, force: boolean, now = performance.now()): void {
+    if (!force && !(p.comparing && now - p.lastPublish >= PUBLISH_INTERVAL_MS)) return;
+    p.lastPublish = now;
+    const phases = p.runs.map((run) => run.stats.phase);
+    const status: VisualizerStatus = phases.includes("searching")
+      ? "searching"
+      : phases.includes("tracing")
+        ? "tracing"
+        : "done";
+    if (!p.comparing) {
+      this.setState({ status, result: status === "searching" ? null : p.result });
       return;
     }
-    color.toArray(this.explored!.instanceColor!.array, slot * 3);
-    if (slot < this.uploadedTo) this.recoloured.push(slot);
+    const [a, b] = p.runs;
+    this.setState({
+      status,
+      comparison: {
+        id: p.id,
+        runs: [{ ...a.stats }, { ...b.stats }],
+        sharedLines: p.reveal.sharedAt![p.drawn],
+        sharedPathLines: p.sharedPathLines,
+      },
+    });
   }
 
   /** Makes sure the explored overlay can hold `lines` lines, emptying it. */
   private reserveExplored(lines: number): void {
+    this.written = 0;
+    this.uploadedTo = 0;
+    this.recoloured = [];
     const current = this.explored;
     if (current && current.instanceMatrix.count >= lines) {
       current.count = 0;
@@ -447,14 +625,6 @@ export class Visualizer {
     mesh.count = 0;
     this.explored = mesh;
     this.object.add(mesh);
-  }
-
-  /** Draws a line in the explored overlay and returns its slot. */
-  private appendExplored(line: number, color: THREE.Color): number {
-    const mesh = this.explored!;
-    const slot = mesh.count++;
-    this.writeLine(mesh, slot, line, "search", color);
-    return slot;
   }
 
   /** Builds a trace's route ribbon, hidden until playback reaches it. */
@@ -475,6 +645,11 @@ export class Visualizer {
   /** The explored-line overlay, for tests; null before the first search. */
   get exploredMesh(): THREE.InstancedMesh | null {
     return this.explored;
+  }
+
+  /** The line in each drawn overlay slot, for tests. */
+  get exploredLines(): Int32Array {
+    return this.playback?.reveal.lines.subarray(0, this.explored!.count) ?? new Int32Array(0);
   }
 
   /** The route ribbons on screen, for tests. */
@@ -556,8 +731,8 @@ export class Visualizer {
   }
 
   /**
-   * Sends the overlay's new lines to the GPU as one contiguous range per
-   * buffer (plus any recoloured ones), and asks for a frame.
+   * Sends the overlay's newly written lines to the GPU as one contiguous
+   * range per buffer (plus any recoloured ones), and asks for a frame.
    */
   private flush(): void {
     const mesh = this.explored;
@@ -565,7 +740,7 @@ export class Visualizer {
       const matrices = mesh.instanceMatrix;
       const colors = mesh.instanceColor!;
       const from = this.uploadedTo;
-      const to = mesh.count;
+      const to = this.written;
       if (to > from) {
         matrices.addUpdateRange(from * 16, (to - from) * 16);
         colors.addUpdateRange(from * 3, (to - from) * 3);
@@ -595,6 +770,94 @@ export class Visualizer {
     this.state = { ...this.state, ...patch };
     for (const listener of this.listeners) listener();
   }
+
+  private setProgress(progress: PlaybackProgress | null): void {
+    this.progress = progress;
+    for (const listener of this.progressListeners) listener();
+  }
+}
+
+const isFinished = (p: Playback) => p.runs.every((run) => run.stats.phase === "done");
+
+/** An overlay slot's colour with the cursor at `k`: its run's, or the search colour once both runs explored it. */
+function slotColor(p: Playback, slot: number, k: number): THREE.Color {
+  const { side, bothAt } = p.reveal;
+  const c = p.colors;
+  if (!side || bothAt![slot] <= k) return c.search;
+  return side[slot] === 0 ? c.compareA : c.compareB;
+}
+
+/**
+ * Lays out the explored overlay for one trace, or for two compared traces on
+ * one cursor. Two traces are interleaved one expansion at a time (first run,
+ * then second), so every cursor maps to exactly one prefix of the overlay.
+ */
+function buildReveal(traces: Trace[], lineCount: number): Reveal {
+  if (traces.length === 1) {
+    const [trace] = traces;
+    return {
+      lines: trace.lines,
+      slotsAt: trace.marks,
+      side: null,
+      bothAt: null,
+      shared: null,
+      sharedAt: null,
+    };
+  }
+
+  const length = Math.max(...traces.map((trace) => trace.expanded));
+  const total = traces[0].lines.length + traces[1].lines.length;
+  const slotOf = new Int32Array(lineCount).fill(-1);
+  const lines = new Int32Array(total);
+  const side = new Uint8Array(total);
+  const bothAt = new Int32Array(total).fill(NEVER);
+  const shared = new Int32Array(Math.min(traces[0].lines.length, traces[1].lines.length));
+  const slotsAt = new Int32Array(length + 1);
+  const sharedAt = new Int32Array(length + 1);
+  let slots = 0;
+  let both = 0;
+
+  for (let k = 1; k <= length; k++) {
+    for (let s = 0; s < 2; s++) {
+      const { expanded, marks, lines: explored } = traces[s];
+      if (k > expanded) continue;
+      for (let i = marks[k - 1]; i < marks[k]; i++) {
+        const line = explored[i];
+        const slot = slotOf[line];
+        if (slot === -1) {
+          slotOf[line] = slots;
+          lines[slots] = line;
+          side[slots] = s;
+          slots++;
+        } else if (side[slot] !== s && bothAt[slot] === NEVER) {
+          bothAt[slot] = k;
+          shared[both++] = slot;
+        }
+      }
+    }
+    slotsAt[k] = slots;
+    sharedAt[k] = both;
+  }
+
+  return {
+    lines: lines.subarray(0, slots),
+    slotsAt,
+    side,
+    bothAt,
+    shared: shared.subarray(0, both),
+    sharedAt,
+  };
+}
+
+/** Index pairs (in `a`, in `b`) of the lines two routes share. */
+function sharedRouteLines(a: readonly number[], b: readonly number[]): Int32Array {
+  const inB = new Map(b.map((line, i) => [line, i]));
+  const pairs: number[] = [];
+  a.forEach((line, i) => {
+    const j = inB.get(line);
+    if (j !== undefined) pairs.push(i, j);
+  });
+  return Int32Array.from(pairs);
 }
 
 /**

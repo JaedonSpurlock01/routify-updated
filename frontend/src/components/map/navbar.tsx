@@ -11,6 +11,7 @@ import {
 } from "../ui/tooltip";
 import { SpeedSlider } from "./slider";
 import { SettingsSheet } from "./settings-sheet";
+import { PlaybackBar } from "./playback-bar";
 
 const ICON_BUTTON =
   "bg-muted size-12 hover:bg-neutral-700 border border-border text-white rounded-full";
@@ -30,7 +31,8 @@ export const Navbar = () => {
   return (
     // One provider so that, once a tooltip has shown, its neighbours open instantly.
     <TooltipProvider delayDuration={400} skipDelayDuration={300}>
-      <nav className="absolute top-3 inset-x-0 grid grid-cols-2 sm:grid-cols-3 items-center gap-y-2 px-4">
+      {/* Only the controls take pointer input, so the map still pans in the gaps (and beside the playback bar). */}
+      <nav className="pointer-events-none absolute top-3 inset-x-0 grid grid-cols-2 sm:grid-cols-3 items-center gap-y-2 px-4 [&>div]:pointer-events-auto">
         <div className="flex gap-2">
           <NavButton label="Settings">
             <Button
@@ -72,6 +74,10 @@ export const Navbar = () => {
             </Button>
           </NavButton>
         </div>
+
+        <section aria-label="Playback controls" className="col-span-2 sm:col-span-3 flex justify-center empty:hidden">
+          <PlaybackBar />
+        </section>
       </nav>
 
       <SettingsSheet open={settingsOpen} setOpen={setSettingsOpen} />

@@ -38,7 +38,7 @@ const METRICS: Metric[] = [
 
 /** Live side-by-side stats for a two-algorithm run. Lower is better everywhere. */
 export function ComparisonPanel() {
-  const { comparison, status } = useVisualizerState();
+  const { comparison, status, paused } = useVisualizerState();
   const [dismissedId, setDismissedId] = useState<number | null>(null);
   if (!comparison || comparison.id === dismissedId) return null;
 
@@ -47,6 +47,7 @@ export function ComparisonPanel() {
       key={comparison.id}
       comparison={comparison}
       running={status === "searching" || status === "tracing"}
+      paused={paused}
       onClose={() => setDismissedId(comparison.id)}
     />
   );
@@ -55,10 +56,12 @@ export function ComparisonPanel() {
 function ComparisonCard({
   comparison,
   running,
+  paused,
   onClose,
 }: {
   comparison: Comparison;
   running: boolean;
+  paused: boolean;
   onClose: () => void;
 }) {
   const { colors } = useSettings();
@@ -83,7 +86,7 @@ function ComparisonCard({
               : "border-emerald-500/40 text-emerald-300"
           )}
         >
-          {running ? "Running…" : "Finished"}
+          {running ? (paused ? "Paused" : "Running…") : "Finished"}
         </span>
         <button
           type="button"

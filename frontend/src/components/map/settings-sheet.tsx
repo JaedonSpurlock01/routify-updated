@@ -63,7 +63,8 @@ export const SettingsSheet = ({
 };
 
 const KEYBINDS = [
-  { keys: "Space", desc: "Start / stop search" },
+  { keys: "Space", desc: "Start / pause / resume search" },
+  { keys: "Esc", desc: "Stop and erase search" },
   { keys: "D", desc: "Clear points" },
   { keys: "C", desc: "Reset map" },
   { keys: "B", desc: "Toggle bloom" },

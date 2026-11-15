@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as THREE from "three";
 import { CityMapBuilder, type CityMap } from "../city/city-map";
-import { runSearch } from "./search";
+import { runSearch, type Trace } from "./search";
 import { Visualizer } from "./visualizer";
 
 // Drive the animation loop by hand instead of waiting on real frames.
@@ -227,3 +227,175 @@ describe("Visualizer playback", () => {
   });
 });
 
+
+describe("Visualizer playback controls", () => {
+  const map = grid();
+
+  const hex = (color: string) => {
+    const c = new THREE.Color(color);
+    return [c.r, c.g, c.b].map((v) => v.toFixed(3)).join(",");
+  };
+
+  /** What the overlay shows: each drawn line and its colour. */
+  function snapshot(visualizer: Visualizer) {
+    const colors = visualizer.exploredMesh!.instanceColor!.array;
+    const shown = new Map<number, string>();
+    visualizer.exploredLines.forEach((line, slot) => {
+      expect(shown.has(line)).toBe(false); // each line drawn once
+      shown.set(line, [0, 1, 2].map((k) => colors[slot * 3 + k].toFixed(3)).join(","));
+    });
+    return shown;
+  }
+
+  /** What the overlay should show after `k` expansions, worked out from the traces alone. */
+  function expected(traces: Trace[], k: number) {
+    const by = new Map<number, number>(); // line -> bit per run
+    traces.forEach((trace, side) => {
+      const until = trace.marks[Math.min(k, trace.expanded)];
+      for (let i = 0; i < until; i++) by.set(trace.lines[i], (by.get(trace.lines[i]) ?? 0) | (1 << side));
+    });
+    const colorOf = (bits: number) =>
+      traces.length === 1 || bits === 3
+        ? hex(COLORS.search)
+        : hex(bits === 1 ? COLORS.compareA : COLORS.compareB);
+    return new Map([...by].map(([line, bits]) => [line, colorOf(bits)]));
+  }
+
+  /** Plays forward one frame at a time, recording the overlay at each whole cursor. */
+  function playRecording(visualizer: Visualizer) {
+    const seen = new Map<number, Map<number, string>>();
+    while (queued) {
+      runFrames(1);
+      const { cursor } = visualizer.getProgress()!;
+      if (!seen.has(cursor)) seen.set(cursor, snapshot(visualizer));
+    }
+    return seen;
+  }
+
+  test("pause holds the cursor and resume carries on from it", () => {
+    const visualizer = placed(map);
+    visualizer.start("dijkstra");
+    runFrames(3);
+    expect(visualizer.pause()).toBe(true);
+    expect(visualizer.getState()).toMatchObject({ status: "searching", paused: true });
+    const held = visualizer.getProgress()!.cursor;
+    expect(queued).toBeNull();
+    expect(visualizer.pause()).toBe(false);
+
+    expect(visualizer.resume()).toBe(true);
+    expect(visualizer.getState().paused).toBe(false);
+    runFrames(1);
+    expect(visualizer.getProgress()!.cursor).toBeGreaterThan(held);
+    runFrames();
+    expect(visualizer.getState().status).toBe("done");
+    expect(visualizer.pause()).toBe(false); // nothing left to pause
+  });
+
+  test("skip to end finishes the search, then the route draws in", () => {
+    const visualizer = placed(map);
+    visualizer.start("bfs");
+    runFrames(2);
+    visualizer.pause();
+    visualizer.skipToEnd();
+    const { length, cursor } = visualizer.getProgress()!;
+    expect(cursor).toBe(length);
+    expect(visualizer.getState()).toMatchObject({ status: "tracing", paused: false });
+    expect(visualizer.getState().result?.found).toBe(true);
+    runFrames(1);
+    expect(visualizer.getState().status).toBe("tracing"); // the route takes about a second
+
+    visualizer.skipToEnd(); // again: finish the route too
+    expect(visualizer.getState().status).toBe("done");
+    expect(queued).toBeNull();
+    const [ribbon] = visualizer.routeRibbons;
+    const samples = ribbon.mesh.geometry.getAttribute("position").count / 2;
+    expect(ribbon.mesh.geometry.drawRange.count).toBe((samples - 1) * 6);
+  });
+
+  test("seeking draws exactly what playback drew at that cursor, in both directions", () => {
+    for (const [first, second] of [
+      ["astar", null],
+      ["astar", "bfs"],
+      ["bidirectional", "dijkstra"],
+    ] as const) {
+      const reference = placed(map);
+      reference.start(first, second);
+      const recorded = playRecording(reference);
+
+      const visualizer = placed(map);
+      visualizer.start(first, second);
+      runFrames(); // to the end, then scrub back and forth
+      const { length } = visualizer.getProgress()!;
+      const cursors = [...recorded.keys()];
+      const order = [...cursors].reverse().concat(cursors.filter((_, i) => i % 3 === 0));
+      const traces = [first, second]
+        .filter((id) => id !== null)
+        .map((id) => runSearch(map, id, 0, map.nodeCount - 1));
+      for (const [cursor, shown] of recorded) expect(shown).toEqual(expected(traces, cursor));
+      for (const cursor of order) {
+        visualizer.seek(cursor);
+        expect(visualizer.getProgress()!.cursor).toBe(cursor);
+        expect(snapshot(visualizer)).toEqual(recorded.get(cursor)!);
+      }
+      visualizer.seek(length);
+      expect(snapshot(visualizer)).toEqual(expected(traces, length));
+    }
+  });
+
+  test("seeking back reopens a finished search, paused, and brings its route back", () => {
+    const visualizer = placed(map);
+    visualizer.start("astar", "bfs");
+    runFrames();
+    const done = visualizer.getState().comparison!;
+    const { length } = visualizer.getProgress()!;
+
+    visualizer.seek(0);
+    expect(visualizer.getState()).toMatchObject({ status: "searching", paused: true });
+    expect(visualizer.exploredMesh!.count).toBe(0);
+    for (const run of visualizer.getState().comparison!.runs) {
+      expect(run).toMatchObject({ phase: "searching", found: false, nodesExpanded: 0 });
+    }
+    for (const ribbon of visualizer.routeRibbons) expect(ribbon.mesh.geometry.drawRange.count).toBe(0);
+    expect(visualizer.getState().comparison!.sharedPathLines).toBe(0);
+
+    visualizer.seek(length);
+    const again = visualizer.getState().comparison!;
+    expect(visualizer.getState()).toMatchObject({ status: "done", paused: false });
+    expect(again.runs).toEqual(done.runs);
+    expect(again.sharedLines).toBe(done.sharedLines);
+    expect(again.sharedPathLines).toBe(done.sharedPathLines);
+  });
+
+  test("seeking while playing keeps playing from the new cursor", () => {
+    const visualizer = placed(map);
+    visualizer.start("dijkstra");
+    runFrames(2);
+    visualizer.seek(1);
+    expect(visualizer.getState().paused).toBe(false);
+    runFrames(1);
+    const { cursor } = visualizer.getProgress()!;
+    expect(cursor).toBeGreaterThan(1);
+    expect(cursor).toBeLessThan(10);
+  });
+
+  test("moving the cursor back and forth uploads nothing it already sent", () => {
+    const visualizer = placed(map);
+    visualizer.start("dijkstra");
+    runFrames();
+    const matrices = visualizer.exploredMesh!.instanceMatrix;
+    matrices.clearUpdateRanges();
+    visualizer.seek(0);
+    visualizer.seek(visualizer.getProgress()!.length);
+    expect(matrices.updateRanges).toHaveLength(0);
+  });
+
+  test("stop after a pause leaves nothing paused", () => {
+    const visualizer = placed(map);
+    visualizer.start("astar");
+    runFrames(1);
+    visualizer.pause();
+    visualizer.stop();
+    expect(visualizer.getState()).toMatchObject({ status: "idle", paused: false });
+    expect(visualizer.getProgress()).toBeNull();
+  });
+});

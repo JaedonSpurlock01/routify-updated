@@ -53,3 +53,10 @@ _Avoid_: progress, position, playhead
 **Speed**:
 How many expansions playback draws per second, or Instant to draw the whole trace at once.
 _Avoid_: nodes per frame
+
+**Timeline**:
+The bar under the navbar that shows the cursor while a search is on screen. Dragging it moves the cursor forwards or backwards without searching again ("scrubbing").
+_Avoid_: seek bar, progress bar
+
+**Skip to end**:
+Moving the cursor straight to the end of the traces. Routes still draw in over about a second; skipping again finishes them.

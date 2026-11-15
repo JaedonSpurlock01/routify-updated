@@ -113,3 +113,9 @@ export function useVisualizerState() {
   const { visualizer } = useMapSession();
   return useSyncExternalStore(visualizer.subscribe, visualizer.getState);
 }
+
+/** The playback cursor; re-renders every frame while playing, so keep its users small. */
+export function usePlaybackProgress() {
+  const { visualizer } = useMapSession();
+  return useSyncExternalStore(visualizer.subscribeProgress, visualizer.getProgress);
+}
