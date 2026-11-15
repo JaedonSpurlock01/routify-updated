@@ -54,12 +54,20 @@ The biggest city I was able to load is Chongqing, China (70mb), which consumes u
 
 ## Algorithms Used
 
-A\* Search | (Weighted) Guarantees shortest path <br/>
-Greedy Search | (Weighted) Does not guarantee shortest path <br/>
-Dijkstra's Search | (Weighted) Guarantees shortest path <br/>
-Breadth-Firth-Search | (Unweighted) Guarantees shortest path <br/>
-Bidirectional Search (Dijkstra from both ends) | (Weighted) Guarantees shortest path <br />
-Depth-First-Search (Very bad for pathfinding) | (Unweighted) Does not guarantee shortest path <br/>
+| Algorithm | Weighted? | Shortest route? |
+| --- | --- | --- |
+| A\* Search | Weighted | Guaranteed |
+| Bidirectional A\* (A\* from both ends, average potentials) | Weighted | Guaranteed |
+| Dijkstra's Search | Weighted | Guaranteed |
+| Bidirectional Dijkstra (Dijkstra from both ends) | Weighted | Guaranteed |
+| Bellman-Ford (queue-based, pruned by the best route so far) | Weighted | Guaranteed |
+| Duan et al. SSSP ([Breaking the Sorting Barrier](https://arxiv.org/abs/2504.17033), 2025) | Weighted | Guaranteed |
+| Weighted A\* (heuristic × 2) | Weighted | At most 2× the shortest |
+| Greedy Search | Weighted | Not guaranteed |
+| Beam Search (keeps the best 64 nodes per layer) | Weighted | Not guaranteed, can miss a route entirely |
+| Breadth-First Search | Unweighted | Fewest roads, not shortest distance |
+| Bidirectional BFS | Unweighted | Fewest roads, not shortest distance |
+| Depth-First Search (very bad for pathfinding) | Unweighted | Not guaranteed |
 
 ## Inspiration
 

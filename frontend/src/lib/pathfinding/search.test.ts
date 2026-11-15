@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { CityMapBuilder, nearestNode, type CityMap } from "../city/city-map";
-import { ALGORITHMS, pathMeters, runSearch, type AlgorithmId } from "./search";
+import {
+  ALGORITHMS,
+  WEIGHTED_ASTAR_WEIGHT,
+  pathMeters,
+  runSearch,
+  type AlgorithmId,
+} from "./search";
 
 /**
  * A 6x6 street grid (ids = row * 10 + col) with one long diagonal shortcut
@@ -27,6 +33,31 @@ function buildGrid(): { map: CityMap; index: (id: number) => number } {
   ids.push(900, 1000, 1001);
   const position = new Map(ids.map((id, n) => [id, n]));
   return { map: builder.build(), index: (id) => position.get(id)! };
+}
+
+/** A deterministic pseudo-random number generator in [0, 1). */
+function seeded(seed: number): () => number {
+  let state = seed;
+  return () => (state = (state * 1103515245 + 12345) % 2147483648) / 2147483648;
+}
+
+/** A jittered size x size street grid with about 15% of its lines missing. */
+function randomGrid(size: number, seed: number): CityMap {
+  const random = seeded(seed);
+  const builder = new CityMapBuilder();
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      builder.addNode(r * size + c, r * 0.001 + random() * 0.0004, c * 0.0013 + random() * 0.0004);
+    }
+  }
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      const id = r * size + c;
+      if (c + 1 < size && random() > 0.15) builder.addWay([id, id + 1]);
+      if (r + 1 < size && random() > 0.15) builder.addWay([id, id + size]);
+    }
+  }
+  return builder.build();
 }
 
 function run(map: CityMap, algorithm: AlgorithmId, start: number, goal: number) {
@@ -125,6 +156,78 @@ describe("Search", () => {
           3
         );
       }
+    }
+  });
+
+  for (const id of ["bidirectional-astar", "bellman-ford", "duan-sssp"] as const) {
+    test(`${id} is shortest between every pair of nodes`, () => {
+      for (let from = 0; from < map.nodeCount; from++) {
+        for (let to = 0; to < map.nodeCount; to++) {
+          const dijkstra = run(map, "dijkstra", from, to);
+          const trace = run(map, id, from, to);
+          expect(trace.found).toBe(dijkstra.found);
+          if (!trace.found) continue;
+          expectWalk(map, trace.route, from, to);
+          expect(trace.meters).toBeCloseTo(dijkstra.meters, 3);
+        }
+      }
+    });
+  }
+
+  test("Duan et al. SSSP matches Dijkstra on larger random street grids", () => {
+    for (const seed of [1, 2, 3]) {
+      const random = randomGrid(40, seed);
+      const pick = seeded(seed * 97);
+      for (let i = 0; i < 25; i++) {
+        const from = Math.floor(pick() * random.nodeCount);
+        const to = Math.floor(pick() * random.nodeCount);
+        const dijkstra = run(random, "dijkstra", from, to);
+        const duan = run(random, "duan-sssp", from, to);
+        expect(duan.found).toBe(dijkstra.found);
+        if (!duan.found) continue;
+        expectWalk(random, duan.route, from, to);
+        expect(duan.meters).toBeCloseTo(dijkstra.meters, 3);
+      }
+    }
+  });
+
+  test("bidirectional A* expands no more than either Dijkstra", () => {
+    const guided = run(map, "bidirectional-astar", start, goal);
+    expect(guided.expanded).toBeLessThanOrEqual(run(map, "bidirectional", start, goal).expanded);
+    expect(guided.expanded).toBeLessThanOrEqual(run(map, "dijkstra", start, goal).expanded);
+  });
+
+  test("bidirectional BFS uses as few lines as BFS between every pair of nodes", () => {
+    for (let from = 0; from < map.nodeCount; from++) {
+      for (let to = 0; to < map.nodeCount; to++) {
+        const bfs = run(map, "bfs", from, to);
+        const both = run(map, "bidirectional-bfs", from, to);
+        expect(both.found).toBe(bfs.found);
+        if (!both.found) continue;
+        expectWalk(map, both.route, from, to);
+        expect(both.route).toHaveLength(bfs.route.length);
+      }
+    }
+  });
+
+  test("weighted A* stays within its weight of the shortest route", () => {
+    for (let to = 0; to < map.nodeCount; to++) {
+      const dijkstra = run(map, "dijkstra", start, to);
+      const weighted = run(map, "weighted-astar", start, to);
+      expect(weighted.found).toBe(dijkstra.found);
+      if (!weighted.found) continue;
+      expectWalk(map, weighted.route, start, to);
+      expect(weighted.meters).toBeLessThanOrEqual(
+        dijkstra.meters * WEIGHTED_ASTAR_WEIGHT + 1e-6
+      );
+    }
+  });
+
+  test("beam search finds a route when the beam is wide enough", () => {
+    for (let to = 0; to < 36; to++) {
+      const beam = run(map, "beam", start, to);
+      expect(beam.found).toBe(true);
+      expectWalk(map, beam.route, start, to);
     }
   });
 
