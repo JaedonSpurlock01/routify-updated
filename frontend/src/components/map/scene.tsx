@@ -68,7 +68,7 @@ export function Scene() {
         </EffectComposer>
       )}
 
-      <primitive object={visualizer.mesh} />
+      <primitive object={visualizer.object} />
 
       {start && (
         <mesh position={[start.x, start.y, 0.02]}>

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { nearestNode, type CityMap } from "../city/city-map";
+import { RouteRibbon } from "./route-ribbon";
 import { runSearch, type AlgorithmId, type Trace } from "./search";
 
 export type VisualizerStatus = "idle" | "searching" | "tracing" | "done";
@@ -40,6 +41,10 @@ interface Run {
   /** Route lines painted so far, and how long the route has been drawing. */
   routeShown: number;
   routeMs: number;
+  /** The route, drawn as one smooth ribbon; null when there is none. */
+  ribbon: RouteRibbon | null;
+  /** Where each route line sits in `trace.route`. */
+  routeIndex: Map<number, number>;
   stats: RunStats;
 }
 
@@ -80,8 +85,6 @@ type Palette = Record<keyof LineColors, THREE.Color> & {
 const EXPLORED = [1, 2] as const;
 const ROUTE = [4, 8] as const;
 const EXPLORED_BOTH = 3;
-/** Both route bits; any of them set means the line is on a route. */
-const ROUTE_BOTH = 12;
 
 /** How often live comparison stats reach React while searches run. */
 const PUBLISH_INTERVAL_MS = 100;
@@ -97,8 +100,11 @@ const MAX_FRAME_MS = 100;
 const STYLE = {
   map: { width: 0.01, z: 0 },
   search: { width: 0.025, z: 0.001 },
-  path: { width: 0.05, z: 0.008 },
 } as const;
+
+/** Routes are ribbons drawn above the roads; a second compared route sits just above the first. */
+const ROUTE_WIDTH = 0.05;
+const ROUTE_Z = [0.008, 0.009] as const;
 
 /** Past this many dirty ranges a single full-buffer upload is cheaper. */
 const MAX_UPDATE_RANGES = 512;
@@ -112,6 +118,9 @@ const MAX_UPDATE_RANGES = 512;
  * (`placePoint`, `start`, `stop`, …) and render `getState()`, via `subscribe`.
  */
 export class Visualizer {
+  /** Everything the visualizer draws: add this to a scene. */
+  readonly object = new THREE.Group();
+  /** The road network, one instance per line. */
   readonly mesh: THREE.InstancedMesh;
   /** Playback speed in expansions per second; Infinity is instant. Read every frame. */
   speed = DEFAULT_SPEED;
@@ -136,6 +145,12 @@ export class Visualizer {
   private readonly listeners = new Set<() => void>();
 
   private painted: number[] = [];
+  private ribbons: RouteRibbon[] = [];
+  private readonly ribbonMaterial = new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  });
   private frame = 0;
   /** True while the next GPU upload is already going to send the whole buffer. */
   private fullUpload = true;
@@ -162,6 +177,7 @@ export class Visualizer {
     this.matrices.onUpload(() => {
       this.fullUpload = false;
     });
+    this.object.add(this.mesh);
 
     this.paintWholeMap();
   }
@@ -222,6 +238,8 @@ export class Visualizer {
     cancelAnimationFrame(this.frame);
     for (const line of this.painted) this.writeLine(line, "map");
     this.painted = [];
+    for (const ribbon of this.ribbons) ribbon.dispose();
+    this.ribbons = [];
     this.owner = null;
     this.flush();
     const { status, result, comparison } = this.state;
@@ -240,8 +258,10 @@ export class Visualizer {
 
   dispose(): void {
     cancelAnimationFrame(this.frame);
+    for (const ribbon of this.ribbons) ribbon.dispose();
     this.mesh.geometry.dispose();
     (this.mesh.material as THREE.Material).dispose();
+    this.ribbonMaterial.dispose();
   }
 
   // ── Playback ─────────────────────────────────────────────────────────────
@@ -255,11 +275,14 @@ export class Visualizer {
   private play(traces: Trace[]): void {
     const comparing = traces.length === 2;
     const owner = comparing ? (this.owner = new Uint8Array(this.map.lineCount)) : null;
-    const runs: Run[] = traces.map((trace) => ({
+    const goal = this.state.end!.node;
+    const runs: Run[] = traces.map((trace, side) => ({
       trace,
       shown: 0,
       routeShown: 0,
       routeMs: 0,
+      ribbon: this.addRibbon(trace, goal, side, comparing),
+      routeIndex: new Map(trace.route.map((line, i) => [line, i])),
       stats: {
         algorithm: trace.algorithm,
         phase: "searching",
@@ -320,16 +343,14 @@ export class Visualizer {
       this.paintOwned(line);
     };
 
+    /** Counts a route line drawn; where both compared routes use it, paints it in both. */
     const route = (line: number, side: number) => {
-      if (!owner) {
-        this.writeLine(line, "path");
-        this.painted.push(line);
-        return;
-      }
+      if (!owner) return;
       const bits = owner[line];
       owner[line] = bits | ROUTE[side];
-      if (bits & ROUTE[1 - side]) sharedPathLines++;
-      this.paintOwned(line);
+      if (!(bits & ROUTE[1 - side])) return;
+      sharedPathLines++;
+      for (const run of runs) run.ribbon?.colorLine(run.routeIndex.get(line)!, this.colors.pathBoth);
     };
 
     const frame = (now: number) => {
@@ -368,6 +389,7 @@ export class Visualizer {
             ? lines.length
             : Math.min(lines.length, Math.ceil((lines.length * run.routeMs) / ROUTE_MS));
           for (let i = run.routeShown; i < until; i++) route(lines[i], side);
+          run.ribbon?.show(until);
           drew ||= until > run.routeShown;
           run.routeShown = until;
           if (until === lines.length) {
@@ -391,20 +413,34 @@ export class Visualizer {
     this.frame = requestAnimationFrame(frame);
   }
 
-  /** Paints a line by which comparison runs explored it or route through it. */
+  /** Paints a line by which comparison runs explored it. */
   private paintOwned(line: number): void {
     const bits = this.owner![line];
     const c = this.colors;
-    if (bits & ROUTE_BOTH) {
-      const color =
-        (bits & ROUTE_BOTH) === ROUTE_BOTH ? c.pathBoth : bits & ROUTE[0] ? c.pathA : c.pathB;
-      this.writeLine(line, "path", color);
-    } else {
-      const color =
-        (bits & EXPLORED_BOTH) === EXPLORED_BOTH ? c.search : bits & EXPLORED[0] ? c.compareA : c.compareB;
-      this.writeLine(line, "search", color);
-    }
+    const color =
+      (bits & EXPLORED_BOTH) === EXPLORED_BOTH ? c.search : bits & EXPLORED[0] ? c.compareA : c.compareB;
+    this.writeLine(line, "search", color);
     this.painted.push(line);
+  }
+
+  /** Builds a trace's route ribbon, hidden until playback reaches it. */
+  private addRibbon(trace: Trace, goal: number, side: number, comparing: boolean): RouteRibbon | null {
+    if (trace.route.length === 0) return null;
+    const c = this.colors;
+    const ribbon = new RouteRibbon(this.map, trace.route, goal, {
+      width: ROUTE_WIDTH,
+      z: ROUTE_Z[side],
+      color: comparing ? (side === 0 ? c.pathA : c.pathB) : c.path,
+      material: this.ribbonMaterial,
+    });
+    this.ribbons.push(ribbon);
+    this.object.add(ribbon.mesh);
+    return ribbon;
+  }
+
+  /** The route ribbons on screen, for tests. */
+  get routeRibbons(): readonly RouteRibbon[] {
+    return this.ribbons;
   }
 
   // ── Painting ─────────────────────────────────────────────────────────────

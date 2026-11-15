@@ -98,13 +98,14 @@ describe("Visualizer comparison", () => {
     const visualizer = placed(map);
     visualizer.start("astar", "bfs");
     runFrames();
-    const colors = visualizer.mesh.instanceColor!.array;
     const seen = new Set<string>();
-    for (let line = 0; line < map.lineCount; line++) {
-      seen.add(
-        [0, 1, 2].map((k) => colors[line * 3 + k].toFixed(2)).join(",")
-      );
-    }
+    const collect = (colors: ArrayLike<number>) => {
+      for (let i = 0; i < colors.length; i += 3) {
+        seen.add([0, 1, 2].map((k) => colors[i + k].toFixed(2)).join(","));
+      }
+    };
+    collect(visualizer.mesh.instanceColor!.array);
+    for (const ribbon of visualizer.routeRibbons) collect(ribbon.colorArray);
     const key = (hex: string, tint = 0) => {
       const c = new THREE.Color(hex).lerp(new THREE.Color("#ffffff"), tint);
       return [c.r, c.g, c.b].map((v) => v.toFixed(2)).join(",");
@@ -176,6 +177,25 @@ describe("Visualizer playback", () => {
       expect(run.phase).toBe("done");
       expect(run.nodesExpanded).toBe(runSearch(map, run.algorithm, 0, map.nodeCount - 1).expanded);
     }
+  });
+
+  test("draws the route as one ribbon with curved turns, removed on stop", () => {
+    const visualizer = placed(map);
+    visualizer.start("astar");
+    runFrames();
+    const [ribbon] = visualizer.routeRibbons;
+    expect(visualizer.routeRibbons).toHaveLength(1);
+    const route = runSearch(map, "astar", 0, map.nodeCount - 1).route;
+    const geometry = ribbon.mesh.geometry;
+    const samples = geometry.getAttribute("position").count / 2;
+    // A corner-to-corner route on a grid turns, and each turn adds curve samples.
+    expect(samples).toBeGreaterThan(route.length + 1);
+    expect(geometry.drawRange.count).toBe((samples - 1) * 6);
+    expect(ribbon.mesh.parent).toBe(visualizer.object);
+
+    visualizer.stop();
+    expect(visualizer.routeRibbons).toHaveLength(0);
+    expect(ribbon.mesh.parent).toBeNull();
   });
 
   test("a faster speed finishes in fewer frames", () => {
