@@ -58,8 +58,7 @@ A\* Search | (Weighted) Guarantees shortest path <br/>
 Greedy Search | (Weighted) Does not guarantee shortest path <br/>
 Dijkstra's Search | (Weighted) Guarantees shortest path <br/>
 Breadth-Firth-Search | (Unweighted) Guarantees shortest path <br/>
-Bidirectional Heuristic Search | (Weighted) Does not guarantee shortest path <br />
-Bidirectional Standard Search | (Unweighted) Does not guarantee shortest path <br />
+Bidirectional Search (Dijkstra from both ends) | (Weighted) Guarantees shortest path <br />
 Depth-First-Search (Very bad for pathfinding) | (Unweighted) Does not guarantee shortest path <br/>
 
 ## Inspiration
