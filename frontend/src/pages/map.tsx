@@ -99,12 +99,12 @@ function MapView({ city }: { city: City }) {
         <MapEffects canvasFrame={canvasFrame} />
         <ComparisonPanel />
 
-        <div className="absolute bottom-6 right-6 max-w-[70vw] text-neutral-100 text-right pointer-events-none [&_a]:pointer-events-auto">
-          <h1 className="text-xl text-balance">{city.place.displayName}</h1>
-          <p className="text-xs mb-3 tabular-nums">
+        <div className="pointer-events-none absolute right-4 bottom-[max(1rem,env(safe-area-inset-bottom))] max-w-[70vw] text-right text-neutral-100 [text-shadow:0_1px_8px_rgb(0_0_0/0.8)] sm:max-w-[min(28rem,calc(100vw-24rem))] md:right-6 md:bottom-6 [&_a]:pointer-events-auto">
+          <h1 className="text-base text-balance md:text-xl">{city.place.displayName}</h1>
+          <p className="mb-2 text-xs text-neutral-300 tabular-nums md:mb-3">
             Lines: {city.map.lineCount.toLocaleString()}
           </p>
-          <p className="text-xs font-light">
+          <p className="text-xs font-light text-neutral-300">
             Data ©{" "}
             <a
               href="https://www.openstreetmap.org/copyright"

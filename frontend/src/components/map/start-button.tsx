@@ -18,7 +18,7 @@ export const StartButton = () => {
       size="icon"
       aria-label={running ? "Stop search" : "Start search"}
       className={cn(
-        "relative shrink-0 rounded-full size-12 border border-border text-white",
+        "relative shrink-0 rounded-full size-11 text-white shadow-none",
         running
           ? "bg-[#ff4252] hover:bg-[#ff5463]"
           : "bg-[#46b780] hover:bg-[#4dcc8e]"

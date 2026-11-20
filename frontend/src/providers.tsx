@@ -14,7 +14,11 @@ export default function Providers() {
           </div>
           <Toaster
             theme="dark"
-            position="bottom-left"
+            // Just under the map controls (see --toast-top), clear of the
+            // city name and comparison panel in the bottom corners.
+            position="top-center"
+            offset={{ top: "var(--toast-top)" }}
+            mobileOffset={{ top: "var(--toast-top)" }}
             toastOptions={{
               duration: 5000,
               style: {

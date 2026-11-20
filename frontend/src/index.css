@@ -116,6 +116,18 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+:root {
+  /* Below the map's top controls: on narrow screens they stack into three
+     52px rows (page buttons, toolbar, playback); from md up into two. */
+  --toast-top: calc(max(1rem, env(safe-area-inset-top)) + 188px);
+}
+
+@media (width >= 48rem) {
+  :root {
+    --toast-top: 148px;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

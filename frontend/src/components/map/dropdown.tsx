@@ -11,6 +11,8 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { Button } from "../ui/button";
+import { cn } from "@/lib/utils";
+import { CAPTION, PILL_BUTTON } from "./surface";
 
 const ITEM = "text-xs rounded-lg cursor-pointer focus:bg-neutral-700 focus:text-neutral-50";
 const LABEL = "text-[10px] font-normal text-muted-foreground px-2 pt-1.5 pb-1";
@@ -35,29 +37,40 @@ export const Dropdown = () => {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button className="group bg-muted hover:bg-neutral-700 h-12 border border-border rounded-full w-40 sm:w-50 flex-col items-stretch gap-0 px-4 text-left">
-          <span className="text-[10px] leading-none text-muted-foreground">
-            {comparing ? "Comparing" : "Algorithm"}
-          </span>
-          <span className="flex items-center justify-between gap-1 text-xs text-neutral-100">
+        <Button
+          className={cn(
+            PILL_BUTTON,
+            "group h-11 w-auto min-w-0 flex-1 justify-between gap-2 px-3 text-left sm:w-52 sm:flex-none sm:px-4"
+          )}
+        >
+          {/* Two lines either way: caption over the algorithm, or one line per compared algorithm. */}
+          <span className="flex min-w-0 flex-col gap-1.5 text-xs leading-none font-medium text-neutral-100">
             {comparing ? (
-              <span className="flex min-w-0 items-center gap-1.5">
-                <Dot color={colors.compareA} />
-                <span className="truncate">{algorithmInfo(algorithm).short}</span>
-                <span className="text-muted-foreground">vs</span>
-                <Dot color={colors.compareB} />
-                <span className="truncate">{algorithmInfo(compareAlgorithm).short}</span>
-              </span>
+              <>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <Dot color={colors.compareA} />
+                  <span className="truncate">{algorithmInfo(algorithm).short}</span>
+                </span>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <Dot color={colors.compareB} />
+                  <span className="truncate">{algorithmInfo(compareAlgorithm).short}</span>
+                </span>
+              </>
             ) : (
-              <span className="truncate">{algorithmInfo(algorithm).label}</span>
+              <>
+                <span className={cn(CAPTION, "font-normal")}>Algorithm</span>
+                <span className="truncate">{algorithmInfo(algorithm).label}</span>
+              </>
             )}
-            <ChevronDown className="shrink-0 transition-transform duration-200 ease-out group-data-[state=open]:rotate-180" />
           </span>
+          <ChevronDown className="shrink-0 transition-transform duration-200 ease-out group-data-[state=open]:rotate-180" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
-        className="dark bg-neutral-800 text-neutral-200 border-neutral-700 rounded-2xl w-50 p-1.5 duration-150 ease-out"
+        sideOffset={10}
+        collisionPadding={16}
+        className="dark bg-neutral-900 text-neutral-200 border-white/10 shadow-lg shadow-black/40 rounded-2xl w-52 p-1.5 duration-150 ease-out"
       >
         <DropdownMenuLabel className={LABEL}>Algorithm</DropdownMenuLabel>
         <DropdownMenuRadioGroup

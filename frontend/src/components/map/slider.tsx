@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMapSession } from "@/lib/state";
 import { Slider } from "../ui/slider";
+import { CAPTION } from "./surface";
 
 // The slider is logarithmic: each step multiplies the speed by the same
 // factor, from MIN to MAX expansions per second. The last step is Instant.
@@ -33,10 +34,10 @@ export const SpeedSlider = () => {
   const speed = speedAt(position);
 
   return (
-    <label className="space-y-2">
-      <span className="flex justify-between gap-2 text-xs text-neutral-100 select-none">
+    <label className="flex h-11 w-32 shrink-0 flex-col justify-center gap-2 px-3 select-none sm:w-48 sm:px-4">
+      <span className={`${CAPTION} flex justify-between gap-2`}>
         <span>Speed</span>
-        <span className="tabular-nums text-neutral-300">{formatSpeed(speed)}</span>
+        <span className="tabular-nums text-neutral-100">{formatSpeed(speed)}</span>
       </span>
       <Slider
         value={[position]}
@@ -48,7 +49,6 @@ export const SpeedSlider = () => {
           setPosition(value);
           visualizer.speed = speedAt(value);
         }}
-        className="w-30 sm:w-40"
       />
     </label>
   );

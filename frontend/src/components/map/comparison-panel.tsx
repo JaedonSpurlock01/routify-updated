@@ -4,6 +4,7 @@ import { algorithmInfo } from "@/lib/pathfinding/search";
 import type { Comparison, RunStats } from "@/lib/pathfinding/visualizer";
 import { useSettings, useVisualizerState } from "@/lib/state";
 import { cn, formatMs } from "@/lib/utils";
+import { SURFACE } from "./surface";
 
 interface Metric {
   label: string;
@@ -74,7 +75,7 @@ function ComparisonCard({
   return (
     <section
       aria-label="Algorithm comparison"
-      className="absolute z-10 inset-x-4 bottom-4 sm:inset-x-auto sm:left-6 sm:bottom-6 sm:w-80 rounded-2xl border border-neutral-700 bg-neutral-900/90 p-4 text-neutral-100 shadow-xl backdrop-blur-md animate-rise-in"
+      className={`${SURFACE} absolute z-10 inset-x-4 bottom-[max(1rem,env(safe-area-inset-bottom))] max-h-[55svh] overflow-y-auto rounded-2xl p-4 animate-rise-in sm:right-auto sm:w-80 md:bottom-6 md:left-6`}
     >
       <header className="flex items-center gap-2">
         <h2 className="text-sm font-medium">Comparison</h2>
@@ -92,7 +93,7 @@ function ComparisonCard({
           type="button"
           aria-label="Close comparison"
           onClick={onClose}
-          className="ml-auto -mr-1 rounded-full p-1 text-neutral-400 transition-colors duration-150 hover:bg-neutral-800 hover:text-neutral-100"
+          className="ml-auto -mr-1 rounded-full p-1 text-neutral-400 transition-colors duration-150 hover:bg-white/10 hover:text-neutral-100"
         >
           <X className="size-4" />
         </button>

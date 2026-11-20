@@ -5,15 +5,14 @@ import { Button } from "../ui/button";
 import { Slider } from "../ui/slider";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { useTogglePlayback } from "./use-map-controls";
+import { PILL, PILL_BUTTON } from "./surface";
 
-const BAR_BUTTON =
-  "size-8 shrink-0 rounded-full text-neutral-100 hover:bg-neutral-700 hover:text-white disabled:opacity-40";
 
 function BarButton({ label, children }: { label: string; children: ReactNode }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>{children}</TooltipTrigger>
-      <TooltipContent side="bottom" sideOffset={6}>
+      <TooltipContent side="bottom" sideOffset={8}>
         {label}
       </TooltipContent>
     </Tooltip>
@@ -54,14 +53,13 @@ function Bar() {
     <div
       role="group"
       aria-label="Playback"
-      className="pointer-events-auto flex items-center gap-2 rounded-full border border-border bg-neutral-900/85 px-1.5 py-1 text-neutral-100 shadow-lg backdrop-blur-md animate-rise-in"
+      className={`${PILL} animate-rise-in`}
     >
       <BarButton label={toggleLabel}>
         <Button
           size="icon"
-          variant="ghost"
           aria-label={toggleLabel}
-          className={BAR_BUTTON}
+          className={PILL_BUTTON}
           onClick={togglePlayback}
         >
           {done ? (
@@ -80,7 +78,7 @@ function Bar() {
         max={Math.max(length, 1)}
         step={1}
         aria-label="Search timeline"
-        className="w-44 sm:w-72"
+        className="mx-2 min-w-0 flex-1"
         onPointerDown={() => {
           const { status, paused } = visualizer.getState();
           if (status !== "done" && !paused && visualizer.pause()) resumeOnRelease.current = true;
@@ -90,16 +88,15 @@ function Bar() {
         onPointerCancel={release}
       />
 
-      <span className="hidden min-w-28 text-right text-[11px] tabular-nums text-neutral-300 sm:block">
+      <span className="min-w-28 shrink-0 pr-1 text-right text-[11px] tabular-nums text-neutral-400">
         {cursor.toLocaleString()} / {length.toLocaleString()}
       </span>
 
       <BarButton label="Skip to end">
         <Button
           size="icon"
-          variant="ghost"
           aria-label="Skip to end"
-          className={BAR_BUTTON}
+          className={PILL_BUTTON}
           disabled={done}
           onClick={() => visualizer.skipToEnd()}
         >
