@@ -207,59 +207,12 @@
     animation: heartbeat 600ms var(--ease-out);
   }
 
-  /* Light rays behind the home page. Compositor-only: opacity + transform. */
-  @keyframes ray-pulse {
-    0%,
-    100% {
-      opacity: 0.3;
-    }
-    50% {
-      opacity: 0.7;
-    }
-  }
-
-  @keyframes ray-sway {
-    0%,
-    100% {
-      transform: translateX(-50%) rotate(var(--ray-rotation));
-    }
-    50% {
-      transform: translateX(-50%)
-        rotate(calc(var(--ray-rotation) + var(--ray-sway)));
-    }
-  }
-
-  .light-ray {
-    position: absolute;
-    top: -5%;
-    left: var(--ray-left);
-    width: var(--ray-width);
-    height: 45vh;
-    transform-origin: top;
-    transform: translateX(-50%) rotate(var(--ray-rotation));
-    opacity: 0.3;
-    mix-blend-mode: screen;
-    background: linear-gradient(
-      to bottom,
-      rgb(200 220 255 / 0.35),
-      rgb(200 220 255 / 0)
-    );
-    filter: blur(var(--ray-blur));
-    animation:
-      ray-pulse var(--ray-pulse-duration) ease-in-out var(--ray-delay) infinite,
-      ray-sway var(--ray-sway-duration) ease-in-out var(--ray-delay) infinite;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .animate-rise-in,
   .animate-panel-in {
     animation-name: fade-only;
-  }
-
-  .light-ray {
-    animation: none;
-    opacity: 0.5;
   }
 
   .animate-heartbeat {

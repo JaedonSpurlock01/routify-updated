@@ -9,7 +9,7 @@ import { suggestedCities } from "@/lib/data/suggested-cities";
 import { cn } from "@/lib/utils";
 import { AddressIcon } from "./address-icon";
 
-/** Non-uniform so the cards read as a cascade, not a metronome. */
+/** Non-uniform so the chips read as a cascade, not a metronome. */
 const STAGGER_MS = [0, 50, 90, 125, 155, 180];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -76,15 +76,15 @@ export default function SearchBox({
   const showPanel = results.length > 0 || showEmpty;
 
   return (
-    <div className="flex flex-col gap-10 items-center">
-      <div className="relative w-[280px] md:w-[350px]">
+    <div className="flex flex-col gap-6 items-center">
+      <div className="relative w-[calc(100vw-2rem)] max-w-md">
         <div className="relative z-10">
           <label htmlFor={id} className="sr-only">
             Search for a city
           </label>
           <Input
             id={id}
-            className="peer ps-11 pe-11 py-5 w-full rounded-full !bg-muted [&::-webkit-search-cancel-button]:hidden"
+            className="peer h-13 w-full rounded-full border-white/10 !bg-neutral-900/95 ps-11 pe-11 md:text-base [&::-webkit-search-cancel-button]:hidden"
             placeholder="Enter a city"
             type="search"
             autoComplete="off"
@@ -130,7 +130,7 @@ export default function SearchBox({
         </div>
 
         {showPanel && (
-          <div className="absolute -inset-x-2 -top-2 pt-14 px-2 pb-2 rounded-3xl border border-border bg-neutral-900/80 backdrop-blur-md shadow-2xl shadow-black/40 animate-panel-in">
+          <div className="absolute -inset-x-2 -top-2 pt-16 px-2 pb-2 rounded-3xl border border-white/10 bg-neutral-900/95 shadow-2xl shadow-black/40 animate-panel-in">
             {showEmpty ? (
               <p className="text-sm text-center text-muted-foreground py-3">
                 No cities found.
@@ -174,40 +174,31 @@ export default function SearchBox({
       </div>
 
       {!hasInteracted && (
-        <div className="flex flex-col gap-3 items-center w-3/4 md:w-[500px] xl:w-[1000px]">
-          <p className="text-muted-foreground text-center text-sm">
-            Quick select cities
-          </p>
-
-          <ul className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
-            {suggestedCities.map((city, index) => (
-              <li
-                key={city.osm_id}
-                className="animate-rise-in"
-                style={{ animationDelay: `${STAGGER_MS[index] ?? 180}ms` }}
+        <ul aria-label="Quick select cities" className="flex max-w-xl flex-wrap justify-center gap-2">
+          {suggestedCities.map((city, index) => (
+            <li
+              key={city.osm_id}
+              className="animate-rise-in"
+              style={{ animationDelay: `${STAGGER_MS[index] ?? 180}ms` }}
+            >
+              <button
+                type="button"
+                className="flex items-center gap-2.5 rounded-full border border-white/10 bg-neutral-900/90 p-1 pr-4 text-sm text-neutral-200 outline-none transition-[color,background-color,border-color,scale] duration-150 ease-out hover:border-white/20 hover:bg-neutral-800 hover:text-white focus-visible:ring-[3px] focus-visible:ring-ring/50 active:scale-[0.97]"
+                onClick={() => onResultClick(city)}
               >
-                <button
-                  type="button"
-                  className="group block w-full h-full text-left p-2 pb-3 border border-border rounded-xl bg-muted/50 outline-none transition-[background-color,scale] duration-150 ease-out hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50 active:scale-[0.97]"
-                  onClick={() => onResultClick(city)}
-                >
-                  <img
-                    src={city.imgSrc}
-                    alt=""
-                    width={480}
-                    height={424}
-                    loading="lazy"
-                    decoding="async"
-                    className="rounded-lg w-full aspect-square object-cover bg-neutral-900"
-                  />
-                  <span className="block text-xs text-primary/90 mt-2 pl-1 text-pretty">
-                    {city.display_name}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
+                <img
+                  src={city.imgSrc}
+                  alt=""
+                  width={32}
+                  height={32}
+                  decoding="async"
+                  className="size-8 rounded-full object-cover"
+                />
+                {city.name}
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

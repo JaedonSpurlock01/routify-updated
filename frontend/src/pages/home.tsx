@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { CityLoader } from "@/components/home/city-loader";
-import { LightRays } from "@/components/home/light-rays";
 import SearchBox from "@/components/home/search-box";
+import { StreetSearchBackdrop } from "@/components/home/street-search-backdrop";
 import { isOsmType } from "@/lib/city/load-city";
 import type { NominatimSuggestion } from "@/types/nominatim";
 
@@ -22,17 +22,26 @@ export default function HomePage() {
   };
 
   return (
-    <LightRays>
-      <main className="min-h-dvh flex flex-col items-center justify-center py-20 md:pt-0">
+    // Clip rather than hide: an overflow-hidden box can still be scrolled by
+    // focus(), which would shift the page sideways when the loader focuses.
+    <div className="relative min-h-dvh overflow-clip bg-[#0d0d0d]">
+      <StreetSearchBackdrop className="absolute inset-0 size-full" />
+      {/* Darkens the middle so the copy reads over the search. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_38%_42%_at_50%_50%,rgb(13_13_13/0.94),rgb(13_13_13/0.6)_60%,rgb(13_13_13/0.15))]"
+      />
+
+      <main className="relative flex min-h-dvh flex-col items-center justify-center px-4 py-20 text-center">
         <img
           src="/logo-dark.svg"
           alt="Routify"
           width={796}
           height={256}
-          className="w-48 h-auto"
+          className="h-auto w-52 sm:w-60"
         />
-        <p className="md:text-lg xl:text-xl text-muted-foreground font-light mt-2 mb-10">
-          The Ultimate City Pathfinding Visualizer
+        <p className="mt-3 mb-10 text-neutral-300 sm:text-lg">
+          Watch pathfinding algorithms explore any city.
         </p>
 
         {hasSelection ? (
@@ -48,6 +57,6 @@ export default function HomePage() {
           <SearchBox onResultClick={onResultClick} />
         )}
       </main>
-    </LightRays>
+    </div>
   );
 }
