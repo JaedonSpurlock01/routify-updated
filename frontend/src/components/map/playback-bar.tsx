@@ -53,6 +53,7 @@ function Bar() {
     <div
       role="group"
       aria-label="Playback"
+      data-playback-bar
       className={`${PILL} animate-rise-in`}
     >
       <BarButton label={toggleLabel}>

@@ -3,6 +3,7 @@ import { Toaster } from "sonner";
 import { Outlet } from "react-router-dom";
 import { queryClient } from "./query-client";
 import { CityProvider, SettingsProvider } from "./lib/state";
+import { SURFACE } from "./components/map/surface";
 
 export default function Providers() {
   return (
@@ -19,14 +20,17 @@ export default function Providers() {
             position="top-center"
             offset={{ top: "var(--toast-top)" }}
             mobileOffset={{ top: "var(--toast-top)" }}
+            gap={8}
             toastOptions={{
               duration: 5000,
-              style: {
-                background: "#262626",
-                color: "#fff",
-                borderRadius: "999px",
-                borderColor: "#404040",
-                paddingInline: "1.25rem",
+              // Drawn like the map controls rather than sonner's own look.
+              unstyled: true,
+              classNames: {
+                toast: `${SURFACE} flex min-h-13 w-full items-center gap-3 rounded-2xl px-4 py-2.5 text-xs`,
+                title: "font-medium leading-snug",
+                icon: "flex size-4 shrink-0 items-center [&>svg]:size-4",
+                success: "[&_[data-icon]]:text-[#46b780]",
+                error: "[&_[data-icon]]:text-[#ff4252]",
               },
             }}
           />

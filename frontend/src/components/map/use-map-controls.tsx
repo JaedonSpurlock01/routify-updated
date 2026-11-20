@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { toast } from "sonner";
 import { formatMs } from "@/lib/utils";
+import { CAPTION } from "./surface";
 import { SoundFx } from "@/lib/sound/sound-fx";
 import { useMapSession, useSettings, useVisualizerState } from "@/lib/state";
 
@@ -171,6 +172,16 @@ function shakeFrames(): Keyframe[] {
   return frames;
 }
 
+/** A caption over its value, like the toolbar's "Algorithm" and "Speed". */
+function resultStat(label: string, value: ReactNode) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <dt className={CAPTION}>{label}</dt>
+      <dd className="leading-none">{value}</dd>
+    </div>
+  );
+}
+
 /** Announces how a search ended, once per search however often it is scrubbed past its end. */
 export function useSearchResultToast() {
   const { result } = useVisualizerState();
@@ -185,16 +196,16 @@ export function useSearchResultToast() {
       return;
     }
     toast.success(
-      <span className="tabular-nums">
-        Distance:{" "}
-        <span className="text-green-400">
-          {(result.meters / 1000).toFixed(2)}
-        </span>{" "}
-        km · <span className="text-green-400">{(result.meters / 1609.344).toFixed(2)}</span>{" "}
-        mi
-        <br />
-        Search took <span className="text-blue-400">{formatMs(result.computeMs)}</span>
-      </span>,
+      <dl className="flex gap-6 tabular-nums">
+        {resultStat(
+          "Route",
+          <>
+            {(result.meters / 1000).toFixed(2)} km
+            <span className="text-neutral-400"> · {(result.meters / 1609.344).toFixed(2)} mi</span>
+          </>
+        )}
+        {resultStat("Search took", formatMs(result.computeMs))}
+      </dl>,
       { duration: 8000 }
     );
   }, [result]);
