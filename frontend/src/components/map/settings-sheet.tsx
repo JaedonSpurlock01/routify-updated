@@ -8,6 +8,7 @@ import {
   DrawerTitle,
 } from "../ui/drawer";
 import { Display } from "./display";
+import { Roadmap } from "./roadmap";
 
 const PANEL = "p-4 !bg-neutral-800 border-neutral-700 text-neutral-100";
 
@@ -24,6 +25,7 @@ export const SettingsSheet = ({
     <div className="space-y-6">
       <Display />
       <Keybinds />
+      <Roadmap />
       <About />
       <a
         href="/"
@@ -41,7 +43,7 @@ export const SettingsSheet = ({
         <DrawerContent className={`${PANEL} max-h-[85dvh] pb-[max(1rem,env(safe-area-inset-bottom))]`}>
           <DrawerTitle className="sr-only">Settings</DrawerTitle>
           <DrawerDescription className="sr-only">
-            Display options, keyboard shortcuts and about
+            Display options, keyboard shortcuts, roadmap and about
           </DrawerDescription>
           <div className="overflow-y-auto pt-4">{content}</div>
         </DrawerContent>
@@ -51,10 +53,10 @@ export const SettingsSheet = ({
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
-      <SheetContent side="left" className={PANEL}>
+      <SheetContent side="left" className={`${PANEL} overflow-y-auto`}>
         <SheetTitle className="sr-only">Settings</SheetTitle>
         <SheetDescription className="sr-only">
-          Display options, keyboard shortcuts and about
+          Display options, keyboard shortcuts, roadmap and about
         </SheetDescription>
         {content}
       </SheetContent>
